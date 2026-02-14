@@ -16,6 +16,7 @@ message MetricsRequest {
   string agent_id = 1;        // Agent 唯一标识
   int64 timestamp = 2;        // 时间戳（毫秒）
   SystemMetrics system = 3;   // 系统指标
+  string hostname = 4;        // 主机名
 }
 
 message MetricsResponse {

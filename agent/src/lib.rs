@@ -9,14 +9,21 @@ mod collector;
 
 pub struct Agent {
     agent_id: String,
+    hostname: String,
     server_addr: String,
     interval: Duration,
 }
 
 impl Agent {
     pub fn new(server_addr: String, interval_secs: u64) -> Self {
+        let hostname = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "unknown".to_string());
+
         Self {
             agent_id: generate_agent_id(),
+            hostname,
             server_addr,
             interval: Duration::from_secs(interval_secs),
         }
@@ -41,6 +48,7 @@ impl Agent {
                 agent_id: self.agent_id.clone(),
                 timestamp: current_timestamp_ms(),
                 system: Some(metrics),
+                hostname: self.hostname.clone(),
             });
 
             match client.report_metrics(request).await {
