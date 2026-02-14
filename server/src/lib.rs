@@ -7,6 +7,7 @@ use common::utils::current_timestamp_ms;
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::info;
 
+mod api;
 mod storage;
 
 pub struct ProbeServer {
@@ -21,14 +22,32 @@ impl ProbeServer {
     }
 
     pub async fn run(addr: String) -> Result<()> {
-        let addr = addr.parse()?;
+        let grpc_addr: std::net::SocketAddr = addr.parse()?;
         let server = ProbeServer::new();
+        let storage = server.storage.clone();
 
-        info!("Server 启动在 {}", addr);
+        // 启动 HTTP API 服务器（端口 +1）
+        let http_port = grpc_addr.port() + 1;
+        let http_addr = format!("{}:{}", grpc_addr.ip(), http_port);
+        let http_addr_clone = http_addr.clone();
+
+        tokio::spawn(async move {
+            let app = api::create_router(storage);
+            let listener = tokio::net::TcpListener::bind(&http_addr_clone)
+                .await
+                .expect("无法绑定 HTTP 端口");
+
+            info!("HTTP API 启动在 http://{}", http_addr_clone);
+            axum::serve(listener, app)
+                .await
+                .expect("HTTP 服务器启动失败");
+        });
+
+        info!("gRPC Server 启动在 {}", grpc_addr);
 
         Server::builder()
             .add_service(ProbeServiceServer::new(server))
-            .serve(addr)
+            .serve(grpc_addr)
             .await?;
 
         Ok(())

@@ -24,7 +24,7 @@ enum Commands {
     },
     /// 运行 Server 模式（中心服务器）
     Server {
-        /// 监听地址
+        /// gRPC 监听地址
         #[arg(short, long, default_value = "0.0.0.0:50051")]
         addr: String,
     },
