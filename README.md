@@ -7,6 +7,7 @@
 - 🚀 单一二进制文件，支持 Agent 和 Server 两种运行模式
 - 📊 实时采集系统指标：CPU、内存、磁盘、网络、进程
 - 🔄 基于 gRPC 的高效通信
+- 🌐 HTTP REST API 查询接口
 - 💾 内存存储（可扩展为数据库）
 
 ## 快速开始
@@ -23,6 +24,10 @@ cargo build --release
 ./target/release/iris server --addr 0.0.0.0:50051
 ```
 
+Server 会同时启动：
+- **gRPC 服务**: 端口 50051（接收 Agent 上报）
+- **HTTP API**: 端口 50052（查询监控数据）
+
 ### 运行 Agent（被监控服务器）
 
 ```bash
@@ -37,8 +42,10 @@ cargo build --release
 iris server [OPTIONS]
 
 Options:
-  -a, --addr <ADDR>  监听地址 [default: 0.0.0.0:50051]
+  -a, --addr <ADDR>  gRPC 监听地址 [default: 0.0.0.0:50051]
   -h, --help         显示帮助信息
+
+注意：HTTP API 端口为 gRPC 端口 + 1
 ```
 
 ### Agent 模式
@@ -76,6 +83,23 @@ iris/
 - **网络**: 发送/接收字节数、包数、错误数
 - **进程**: Top 10 进程的 CPU、内存使用情况
 
+## HTTP API
+
+Server 提供 RESTful API 用于查询监控数据：
+
+```bash
+# 获取所有 Agent 列表
+curl http://localhost:50052/api/agents
+
+# 获取指定 Agent 的最新指标
+curl http://localhost:50052/api/agents/agent-hostname/metrics
+
+# 获取历史数据
+curl "http://localhost:50052/api/agents/agent-hostname/metrics/history?limit=100"
+```
+
+详细 API 文档请查看 [docs/API.md](docs/API.md)
+
 ## 开发
 
 ```bash
@@ -91,7 +115,7 @@ cargo fmt
 
 ## TODO
 
-- [ ] 添加 HTTP API 用于查询指标
+- [x] 添加 HTTP API 用于查询指标
 - [ ] 持久化存储（PostgreSQL/InfluxDB）
 - [ ] Web UI 展示
 - [ ] 告警功能
