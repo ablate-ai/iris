@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package probe;
+
+// 探针服务定义
+service ProbeService {
+  // 上报指标数据
+  rpc ReportMetrics(MetricsRequest) returns (MetricsResponse);
+
+  // 心跳检测
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// 指标上报请求
+message MetricsRequest {
+  string agent_id = 1;        // Agent 唯一标识
+  int64 timestamp = 2;        // 时间戳（毫秒）
+  SystemMetrics system = 3;   // 系统指标
+}
+
+message MetricsResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// 心跳请求
+message HeartbeatRequest {
+  string agent_id = 1;
+  int64 timestamp = 2;
+}
+
+message HeartbeatResponse {
+  bool alive = 1;
+  int64 server_time = 2;
+}
+
+// 系统指标
+message SystemMetrics {
+  CpuMetrics cpu = 1;
+  MemoryMetrics memory = 2;
+  repeated DiskMetrics disks = 3;
+  NetworkMetrics network = 4;
+  repeated ProcessMetrics processes = 5;
+}
+
+// CPU 指标
+message CpuMetrics {
+  double usage_percent = 1;     // CPU 使用率
+  int32 core_count = 2;         // 核心数
+  repeated double per_core = 3; // 每个核心的使用率
+  double load_avg_1 = 4;        // 1分钟负载
+  double load_avg_5 = 5;        // 5分钟负载
+  double load_avg_15 = 6;       // 15分钟负载
+}
+
+// 内存指标
+message MemoryMetrics {
+  uint64 total = 1;             // 总内存（字节）
+  uint64 used = 2;              // 已使用（字节）
+  uint64 available = 3;         // 可用（字节）
+  double usage_percent = 4;     // 使用率
+  uint64 swap_total = 5;        // Swap 总量
+  uint64 swap_used = 6;         // Swap 已使用
+}
+
+// 磁盘指标
+message DiskMetrics {
+  string mount_point = 1;       // 挂载点
+  string device = 2;            // 设备名
+  uint64 total = 3;             // 总容量（字节）
+  uint64 used = 4;              // 已使用（字节）
+  uint64 available = 5;         // 可用（字节）
+  double usage_percent = 6;     // 使用率
+  uint64 read_bytes = 7;        // 读取字节数
+  uint64 write_bytes = 8;       // 写入字节数
+}
+
+// 网络指标
+message NetworkMetrics {
+  uint64 bytes_sent = 1;        // 发送字节数
+  uint64 bytes_recv = 2;        // 接收字节数
+  uint64 packets_sent = 3;      // 发送包数
+  uint64 packets_recv = 4;      // 接收包数
+  uint64 errors_in = 5;         // 接收错误数
+  uint64 errors_out = 6;        // 发送错误数
+}
+
+// 进程指标
+message ProcessMetrics {
+  int32 pid = 1;                // 进程 ID
+  string name = 2;              // 进程名
+  double cpu_usage = 3;         // CPU 使用率
+  uint64 memory = 4;            // 内存使用（字节）
+  string status = 5;            // 状态
+}
