@@ -2,8 +2,9 @@ use common::proto::{
     CpuMetrics, DiskMetrics, MemoryMetrics, NetworkMetrics, ProcessMetrics, SystemMetrics,
     SystemInfo, AgentMetrics,
 };
-use sysinfo::{System, Networks, Disks, Pid, ProcessRefreshKind, ProcessesToUpdate};
-use std::sync::atomic::{AtomicU64, Ordering};
+use sysinfo::{System, Networks, Disks, Pid, ProcessRefreshKind, ProcessesToUpdate, MINIMUM_CPU_UPDATE_INTERVAL};
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
 // 全局统计
@@ -14,12 +15,36 @@ static ERRORS_COUNT: AtomicU64 = AtomicU64::new(0);
 static AGENT_START_TIME: once_cell::sync::Lazy<Instant> =
     once_cell::sync::Lazy::new(Instant::now);
 
+// 全局 System 实例，用于保持 CPU 使用率采集的状态
+static SYSTEM: once_cell::sync::Lazy<Mutex<System>> =
+    once_cell::sync::Lazy::new(|| {
+        let mut sys = System::new_all();
+        // 第一次刷新 CPU，为后续采集做准备
+        sys.refresh_cpu_usage();
+        Mutex::new(sys)
+    });
+
+// 标记是否已经完成初始化等待
+static CPU_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
 /// 采集系统指标
 pub fn collect_metrics() -> SystemMetrics {
     let start = Instant::now();
 
-    let mut sys = System::new_all();
-    sys.refresh_all();
+    // 第一次采集时，需要等待 MINIMUM_CPU_UPDATE_INTERVAL 以获取准确的 CPU 使用率
+    if !CPU_INITIALIZED.load(Ordering::Relaxed) {
+        std::thread::sleep(MINIMUM_CPU_UPDATE_INTERVAL);
+        CPU_INITIALIZED.store(true, Ordering::Relaxed);
+    }
+
+    let mut sys = SYSTEM.lock().unwrap();
+
+    // 刷新 CPU 使用率（需要两次刷新之间的差值）
+    sys.refresh_cpu_usage();
+
+    // 刷新其他系统信息
+    sys.refresh_memory();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
 
     let collection_time_ms = start.elapsed().as_millis() as u64;
 
