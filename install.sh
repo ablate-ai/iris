@@ -11,6 +11,7 @@ NC='\033[0m' # No Color
 # 默认配置
 REPO="ablate-ai/iris"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+WEB_DIR="${WEB_DIR:-/opt/iris/web}"
 VERSION="${VERSION:-latest}"
 INSTALL_AGENT="${INSTALL_AGENT:-true}"
 INSTALL_SERVER="${INSTALL_SERVER:-true}"
@@ -133,6 +134,45 @@ install_binary() {
     success "${binary_name} 已安装到 ${INSTALL_DIR}/${binary_name}${ext}"
 }
 
+# 下载并安装 Web UI
+install_web_ui() {
+    local version=$1
+
+    info "安装 Web UI..."
+
+    # 构建下载 URL
+    local download_url="${GITHUB_PROXY}https://github.com/${REPO}/releases/download/${version}/web.tar.gz"
+    local tmp_dir=$(mktemp -d)
+
+    info "下载 web.tar.gz..."
+    if ! curl -fsSL -H "User-Agent: iris-installer" "$download_url" -o "${tmp_dir}/web.tar.gz"; then
+        warning "下载 Web UI 失败，跳过"
+        rm -rf "$tmp_dir"
+        return 0
+    fi
+
+    # 解压
+    info "解压 Web UI..."
+    cd "$tmp_dir"
+    tar -xzf web.tar.gz
+
+    # 创建 Web 目录
+    if [ ! -w "$(dirname "$WEB_DIR")" ]; then
+        warning "需要 sudo 权限安装到 ${WEB_DIR}"
+        sudo mkdir -p "$WEB_DIR"
+        sudo cp -r web/* "$WEB_DIR/"
+    else
+        mkdir -p "$WEB_DIR"
+        cp -r web/* "$WEB_DIR/"
+    fi
+
+    # 清理临时文件
+    cd - > /dev/null
+    rm -rf "$tmp_dir"
+
+    success "Web UI 已安装到 ${WEB_DIR}"
+}
+
 # 显示使用说明
 show_usage() {
     cat << EOF
@@ -202,6 +242,8 @@ main() {
 
     if [ "$INSTALL_SERVER" = "true" ]; then
         install_binary "iris-server" "$platform" "$VERSION"
+        # 安装 Web UI（仅当安装 server 时）
+        install_web_ui "$VERSION"
     fi
 
     echo ""
@@ -217,6 +259,8 @@ main() {
     if [ "$INSTALL_SERVER" = "true" ]; then
         echo -e "  ${BLUE}iris-server${NC} -> ${INSTALL_DIR}/iris-server"
         echo -e "    运行: ${GREEN}iris-server --addr 0.0.0.0:50051${NC}"
+        echo -e "  ${BLUE}Web UI${NC} -> ${WEB_DIR}"
+        echo -e "    自定义: ${YELLOW}编辑 ${WEB_DIR}/index.html${NC}"
     fi
 
     echo ""
