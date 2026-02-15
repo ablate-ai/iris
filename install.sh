@@ -11,7 +11,7 @@ NC='\033[0m' # No Color
 # 默认配置
 REPO="ablate-ai/iris"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-WEB_DIR="${WEB_DIR:-/opt/iris/web}"
+WEB_DIR="${WEB_DIR:-./web}"
 VERSION="${VERSION:-latest}"
 INSTALL_AGENT="${INSTALL_AGENT:-true}"
 INSTALL_SERVER="${INSTALL_SERVER:-true}"
