@@ -61,7 +61,7 @@ run-server:
 
 # 运行 agent（开发模式）
 run-agent:
-	cargo run --bin iris-agent -- --server http://127.0.0.1:50051 --interval 10
+	cargo run --bin iris-agent -- --server http://127.0.0.1:50051 --interval 1
 
 # 一键启动开发环境（同时运行 server 和 agent）
 dev:
@@ -73,7 +73,7 @@ dev:
 	@trap 'kill 0' EXIT; \
 	cargo run --bin iris-server -- --addr 0.0.0.0:50051 & \
 	sleep 3; \
-	cargo run --bin iris-agent -- --server http://127.0.0.1:50051 --interval 5
+	cargo run --bin iris-agent -- --server http://127.0.0.1:50051 --interval 1
 
 # 创建 release
 release:

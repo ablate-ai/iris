@@ -19,7 +19,7 @@ enum Commands {
         server: String,
 
         /// 上报间隔（秒）
-        #[arg(short, long, default_value = "10")]
+        #[arg(short, long, default_value = "1")]
         interval: u64,
     },
     /// 运行 Server 模式（中心服务器）
