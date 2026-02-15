@@ -865,6 +865,7 @@
             if (!agent) return null;
 
             const sys = agent.system;
+            const agentMetrics = sys?.agent_metrics;
 
             return (
                 <div className="modal-overlay" onClick={onClose}>
@@ -874,6 +875,38 @@
                             <button className="modal-close" onClick={onClose}>&times;</button>
                         </div>
                         <div className="modal-body">
+                            {agentMetrics && (
+                                <div className="section">
+                                    <h3 className="section-title">探针资源占用</h3>
+                                    <div className="info-grid">
+                                        <div className="info-item">
+                                            <div className="info-item-label">CPU 使用率</div>
+                                            <div className="info-item-value">{agentMetrics.cpu_usage?.toFixed(2)}%</div>
+                                        </div>
+                                        <div className="info-item">
+                                            <div className="info-item-label">内存使用</div>
+                                            <div className="info-item-value">{formatBytes(agentMetrics.memory_usage)}</div>
+                                        </div>
+                                        <div className="info-item">
+                                            <div className="info-item-label">采集耗时</div>
+                                            <div className="info-item-value">{agentMetrics.collection_time_ms} ms</div>
+                                        </div>
+                                        <div className="info-item">
+                                            <div className="info-item-label">运行时长</div>
+                                            <div className="info-item-value">{formatUptime(agentMetrics.uptime_seconds)}</div>
+                                        </div>
+                                        <div className="info-item">
+                                            <div className="info-item-label">已发送指标</div>
+                                            <div className="info-item-value">{agentMetrics.metrics_sent}</div>
+                                        </div>
+                                        <div className="info-item">
+                                            <div className="info-item-label">错误次数</div>
+                                            <div className="info-item-value">{agentMetrics.errors_count}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="section">
                                 <h3 className="section-title">CPU 使用率</h3>
                                 <Chart data={history} title="CPU" color="#0066ff" />
