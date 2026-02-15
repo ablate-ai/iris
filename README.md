@@ -8,6 +8,7 @@
 - 📊 实时采集系统指标：CPU、内存、磁盘、网络、进程
 - 🔄 基于 gRPC 的高效通信
 - 🌐 HTTP REST API 查询接口
+- 🎨 现代化 Web UI（单文件 HTML，零构建）
 - 💾 内存存储（可扩展为数据库）
 
 ## 快速开始
@@ -27,6 +28,7 @@ cargo build --release
 Server 会同时启动：
 - **gRPC 服务**: 端口 50051（接收 Agent 上报）
 - **HTTP API**: 端口 50052（查询监控数据）
+- **Web UI**: http://localhost:50052（监控面板）
 
 ### 运行 Agent（被监控服务器）
 
@@ -100,6 +102,19 @@ curl "http://localhost:50052/api/agents/agent-hostname/metrics/history?limit=100
 
 详细 API 文档请查看 [docs/API.md](docs/API.md)
 
+## Web UI
+
+访问 `http://localhost:50052` 即可打开监控面板。
+
+**功能特性**：
+- 📊 Dashboard 首页：所有 Agent 概览、实时指标
+- 📈 历史趋势图表：CPU、内存使用率
+- 💻 系统详情：磁盘、网络、进程信息
+- 🔄 自动刷新：每 5 秒更新数据
+- 📱 响应式设计：支持移动端访问
+
+详细说明请查看 [web/README.md](web/README.md)
+
 ## 开发
 
 ```bash
@@ -116,7 +131,7 @@ cargo fmt
 ## TODO
 
 - [x] 添加 HTTP API 用于查询指标
+- [x] Web UI 展示
 - [ ] 持久化存储（PostgreSQL/InfluxDB）
-- [ ] Web UI 展示
 - [ ] 告警功能
 - [ ] 多 Agent 管理
