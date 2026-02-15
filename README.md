@@ -13,6 +13,14 @@
 
 ## 快速开始
 
+### 一键安装（推荐）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh | bash
+```
+
+更多安装选项请查看 [安装文档](docs/INSTALL.md)
+
 ### 编译
 
 项目提供两种编译方式：
