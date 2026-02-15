@@ -8,15 +8,41 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-agent = { path = "agent" }
-server = { path = "server" }
-common = { path = "common" }
 tokio = { version = "1.42", features = ["full"] }
 clap = { version = "4.5", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1.0"
 
+# Agent 二进制依赖
+[dependencies.agent]
+path = "agent"
+optional = true
+
+# Server 二进制依赖
+[dependencies.server]
+path = "server"
+optional = true
+
+# 保留原有的统一二进制（可选）
 [[bin]]
 name = "iris"
 path = "src/main.rs"
+required-features = ["agent", "server"]
+
+# Agent 独立二进制
+[[bin]]
+name = "iris-agent"
+path = "src/agent_main.rs"
+required-features = ["agent"]
+
+# Server 独立二进制
+[[bin]]
+name = "iris-server"
+path = "src/server_main.rs"
+required-features = ["server"]
+
+[features]
+default = ["agent", "server"]
+agent = ["dep:agent"]
+server = ["dep:server"]
