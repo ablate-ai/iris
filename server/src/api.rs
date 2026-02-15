@@ -1,18 +1,23 @@
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::IntoResponse,
+    http::{header, StatusCode, Uri},
+    response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
+use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
 use tracing::info;
 
 use crate::storage::Storage;
 use common::proto::MetricsRequest;
+
+#[derive(RustEmbed)]
+#[folder = "../web"]
+struct WebAssets;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -73,30 +78,54 @@ pub fn create_router(storage: Storage) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // 检查 web 目录是否存在
-    let web_dir = std::path::Path::new("web");
-    let serve_web = if web_dir.exists() {
-        info!("Web UI 目录存在，启用静态文件服务");
-        true
-    } else {
-        info!("Web UI 目录不存在，仅提供 API 服务");
-        false
-    };
+    info!("Web UI 已嵌入二进制，启用静态文件服务");
 
-    let mut router = Router::new()
+    Router::new()
         .route("/api", get(root))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/:id/metrics", get(get_agent_metrics))
         .route("/api/agents/:id/metrics/history", get(get_agent_history))
+        .fallback(serve_embedded_file)
         .layer(cors)
-        .with_state(Arc::new(state));
+        .with_state(Arc::new(state))
+}
 
-    // 如果 web 目录存在，添加静态文件服务
-    if serve_web {
-        router = router.nest_service("/", ServeDir::new("web"));
+/// 服务嵌入的静态文件
+async fn serve_embedded_file(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+
+    // 如果路径为空或是目录，返回 index.html
+    let path = if path.is_empty() || path.ends_with('/') {
+        "index.html"
+    } else {
+        path
+    };
+
+    match WebAssets::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .body(Body::from(content.data))
+                .unwrap()
+        }
+        None => {
+            // 对于 SPA，未找到的路径返回 index.html
+            if let Some(index) = WebAssets::get("index.html") {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/html")
+                    .body(Body::from(index.data))
+                    .unwrap()
+            } else {
+                Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("404 Not Found"))
+                    .unwrap()
+            }
+        }
     }
-
-    router
 }
 
 /// 根路径
