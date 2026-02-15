@@ -27,12 +27,20 @@ curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | ba
 
 # 安装 Agent（被监控服务器），连接到指定 Server
 curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
+
+# 安装 Agent 并自定义显示名称
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 IRIS_HOSTNAME=my-server bash
 ```
 
 💡 **国内用户加速下载**：使用 GitHub 镜像代理
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | GITHUB_PROXY=https://ghfast.top/ bash
 ```
+
+**环境变量说明**：
+- `IRIS_SERVER`: Agent 连接的 Server 地址（必需）
+- `IRIS_HOSTNAME`: 自定义显示名称（可选，默认使用系统 hostname）
+- `GITHUB_PROXY`: GitHub 下载加速代理（可选）
 
 **安装完成后**：
 - 🌐 Web UI: http://localhost:50052
