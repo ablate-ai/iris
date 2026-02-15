@@ -1,21 +1,24 @@
-.PHONY: help build build-agent build-server build-all test clean fmt clippy run-server run-agent release
+.PHONY: help build build-agent build-server build-all test clean fmt clippy run-server run-agent release release-major release-minor release-patch
 
 # 默认目标
 help:
 	@echo "Iris 项目 Makefile"
 	@echo ""
 	@echo "可用命令:"
-	@echo "  make build         - 编译所有二进制（debug 模式）"
-	@echo "  make build-agent   - 编译 iris-agent"
-	@echo "  make build-server  - 编译 iris-server"
-	@echo "  make build-all     - 编译所有二进制（release 模式）"
-	@echo "  make test          - 运行测试"
-	@echo "  make fmt           - 格式化代码"
-	@echo "  make clippy        - 运行 clippy 检查"
-	@echo "  make clean         - 清理构建产物"
-	@echo "  make run-server    - 运行 server（开发模式）"
-	@echo "  make run-agent     - 运行 agent（开发模式）"
-	@echo "  make release       - 创建并推送 release tag"
+	@echo "  make build          - 编译所有二进制（debug 模式）"
+	@echo "  make build-agent    - 编译 iris-agent"
+	@echo "  make build-server   - 编译 iris-server"
+	@echo "  make build-all      - 编译所有二进制（release 模式）"
+	@echo "  make test           - 运行测试"
+	@echo "  make fmt            - 格式化代码"
+	@echo "  make clippy         - 运行 clippy 检查"
+	@echo "  make clean          - 清理构建产物"
+	@echo "  make run-server     - 运行 server（开发模式）"
+	@echo "  make run-agent      - 运行 agent（开发模式）"
+	@echo "  make release        - 创建并推送 release tag（需指定 VERSION）"
+	@echo "  make release-major  - 自动递增主版本号 (x.0.0)"
+	@echo "  make release-minor  - 自动递增次版本号 (x.y.0)"
+	@echo "  make release-patch  - 自动递增补丁版本号 (x.y.z)"
 
 # 编译（debug 模式）
 build:
@@ -67,3 +70,15 @@ release:
 		exit 1; \
 	fi
 	@./scripts/release.sh $(VERSION)
+
+# 自动递增主版本号 (x.0.0)
+release-major:
+	@./scripts/bump-version.sh major
+
+# 自动递增次版本号 (x.y.0)
+release-minor:
+	@./scripts/bump-version.sh minor
+
+# 自动递增补丁版本号 (x.y.z)
+release-patch:
+	@./scripts/bump-version.sh patch
