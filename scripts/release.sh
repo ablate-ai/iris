@@ -42,11 +42,6 @@ fi
 echo -e "${YELLOW}准备发布版本: $TAG${NC}"
 echo ""
 
-# 显示最近的提交
-echo -e "${GREEN}最近的提交:${NC}"
-git log --oneline -5
-echo ""
-
 # 确认
 read -p "确认创建并推送 tag $TAG? (y/N) " -n 1 -r
 echo
