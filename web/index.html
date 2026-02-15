@@ -269,6 +269,26 @@
             font-size: 15px;
             font-weight: 600;
             color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .network-trend {
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .network-stat-value.trend-up {
+            color: var(--success);
+        }
+
+        .network-stat-value.trend-down {
+            color: var(--danger);
+        }
+
+        .network-stat-value.trend-neutral {
+            color: var(--text-primary);
         }
 
         .network-stat-total {
@@ -414,6 +434,106 @@
             margin-bottom: 16px;
             padding-bottom: 8px;
             border-bottom: 2px solid var(--accent-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-title .icon {
+            font-size: 18px;
+        }
+
+        /* Dashboard Grid */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .dashboard-card {
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            padding: 16px;
+        }
+
+        .dashboard-card-title {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .dashboard-card-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1;
+            margin-bottom: 8px;
+        }
+
+        .dashboard-card-subtitle {
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }
+
+        .dashboard-card-trend {
+            font-size: 12px;
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .trend-positive {
+            color: var(--success);
+        }
+
+        .trend-negative {
+            color: var(--danger);
+        }
+
+        /* Charts Row */
+        .charts-row {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .chart-card {
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            padding: 16px;
+        }
+
+        .chart-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .chart-card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .chart-card-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .chart-card-body {
+            height: 200px;
         }
 
         .chart-container {
@@ -521,8 +641,37 @@
                 grid-template-columns: 1fr;
             }
 
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .charts-row {
+                grid-template-columns: 1fr;
+            }
+
             .container {
                 padding: 16px;
+            }
+
+            .modal {
+                max-height: 95vh;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .header-content {
+                flex-direction: column;
+                gap: 8px;
+                align-items: flex-start;
+            }
+
+            .table {
+                font-size: 12px;
+            }
+
+            .table th,
+            .table td {
+                padding: 8px 4px;
             }
         }
     </style>
@@ -715,6 +864,23 @@
             const totalSent = formatBytesShort(network?.bytes_sent);
             const totalRecv = formatBytesShort(network?.bytes_recv);
 
+            // 计算网络趋势
+            const prevUploadSpeed = agent.prev_network_speed?.upload || 0;
+            const prevDownloadSpeed = agent.prev_network_speed?.download || 0;
+            const currentUploadSpeed = agent.network_speed?.upload || 0;
+            const currentDownloadSpeed = agent.network_speed?.download || 0;
+
+            const uploadTrend = currentUploadSpeed > prevUploadSpeed ? 'up' :
+                               currentUploadSpeed < prevUploadSpeed ? 'down' : 'neutral';
+            const downloadTrend = currentDownloadSpeed > prevDownloadSpeed ? 'up' :
+                                 currentDownloadSpeed < prevDownloadSpeed ? 'down' : 'neutral';
+
+            const getTrendIcon = (trend) => {
+                if (trend === 'up') return '↑';
+                if (trend === 'down') return '↓';
+                return '−';
+            };
+
             return (
                 <div className="agent-card" onClick={() => onClick(agent)}>
                     <div className="agent-header">
@@ -753,7 +919,12 @@
                                     <span className="network-stat-icon">⬆️</span>
                                     <span className="network-stat-label">上传</span>
                                 </div>
-                                <div className="network-stat-value"><AnimatedValue value={uploadSpeed} /></div>
+                                <div className={`network-stat-value trend-${uploadTrend}`}>
+                                    <AnimatedValue value={uploadSpeed} />
+                                    <span className="network-trend">
+                                        {getTrendIcon(uploadTrend)}
+                                    </span>
+                                </div>
                                 <div className="network-stat-total">总计 {totalSent}</div>
                             </div>
                             <div className="network-stat">
@@ -761,7 +932,12 @@
                                     <span className="network-stat-icon">⬇️</span>
                                     <span className="network-stat-label">下载</span>
                                 </div>
-                                <div className="network-stat-value"><AnimatedValue value={downloadSpeed} /></div>
+                                <div className={`network-stat-value trend-${downloadTrend}`}>
+                                    <AnimatedValue value={downloadSpeed} />
+                                    <span className="network-trend">
+                                        {getTrendIcon(downloadTrend)}
+                                    </span>
+                                </div>
                                 <div className="network-stat-total">总计 {totalRecv}</div>
                             </div>
                         </div>
@@ -801,7 +977,7 @@
             );
         };
 
-        const Chart = ({ data, title, color }) => {
+        const Chart = ({ data, title, color, height = 280 }) => {
             const chartRef = useRef(null);
             const plotRef = useRef(null);
 
@@ -812,12 +988,14 @@
                 const values = data.map(d => {
                     if (title === 'CPU') return d.system?.cpu?.usage_percent || 0;
                     if (title === '内存') return d.system?.memory?.usage_percent || 0;
+                    if (title === '上传速度') return d.system?.network ? (d.network_speed?.upload || 0) / 1024 / 1024 : 0;
+                    if (title === '下载速度') return d.system?.network ? (d.network_speed?.download || 0) / 1024 / 1024 : 0;
                     return 0;
                 });
 
                 const opts = {
                     width: chartRef.current.offsetWidth,
-                    height: 280,
+                    height: height,
                     series: [
                         {},
                         {
@@ -836,12 +1014,17 @@
                             stroke: '#e5e7eb',
                             grid: { stroke: '#f3f4f6', width: 1 },
                             size: 50,
-                            values: (u, vals) => vals.map(v => v.toFixed(1) + '%'),
+                            values: (u, vals) => {
+                                if (title.includes('速度')) {
+                                    return vals.map(v => v.toFixed(2) + ' MB/s');
+                                }
+                                return vals.map(v => v.toFixed(1) + '%');
+                            },
                         }
                     ],
                     scales: {
                         x: { time: true },
-                        y: { range: [0, 100] },
+                        y: { range: title.includes('速度') ? undefined : [0, 100] },
                     },
                 };
 
@@ -856,9 +1039,9 @@
                         plotRef.current.destroy();
                     }
                 };
-            }, [data, title, color]);
+            }, [data, title, color, height]);
 
-            return <div ref={chartRef} className="chart-container"></div>;
+            return <div ref={chartRef} className="chart-container" style={{height: height}}></div>;
         };
 
         const AgentModal = ({ agent, onClose, history }) => {
@@ -866,6 +1049,10 @@
 
             const sys = agent.system;
             const agentMetrics = sys?.agent_metrics;
+            const cpu = sys?.cpu?.usage_percent?.toFixed(1) || 0;
+            const memory = sys?.memory?.usage_percent?.toFixed(1) || 0;
+            const load = sys?.cpu?.load_avg_1?.toFixed(2) || 0;
+            const uptime = formatUptime(sys?.system_info?.uptime);
 
             return (
                 <div className="modal-overlay" onClick={onClose}>
@@ -875,9 +1062,156 @@
                             <button className="modal-close" onClick={onClose}>&times;</button>
                         </div>
                         <div className="modal-body">
+                            {/* 主仪表盘 */}
+                            <div className="dashboard-grid">
+                                <div className="dashboard-card">
+                                    <div className="dashboard-card-title">
+                                        <span>🖥️</span> CPU 使用率
+                                    </div>
+                                    <div className="dashboard-card-value">
+                                        <AnimatedNumber value={parseFloat(cpu)} duration={600} decimals={1} />%
+                                    </div>
+                                    <div className="dashboard-card-subtitle">
+                                        {sys?.cpu?.core_count || 'N/A'} 核心 · 负载 {load}
+                                    </div>
+                                    <div className="metric-bar" style={{marginTop: '12px'}}>
+                                        <div className="metric-bar-fill cpu" style={{width: `${cpu}%`}} />
+                                    </div>
+                                </div>
+
+                                <div className="dashboard-card">
+                                    <div className="dashboard-card-title">
+                                        <span>💾</span> 内存使用率
+                                    </div>
+                                    <div className="dashboard-card-value">
+                                        <AnimatedNumber value={parseFloat(memory)} duration={600} decimals={1} />%
+                                    </div>
+                                    <div className="dashboard-card-subtitle">
+                                        {formatBytes(sys?.memory?.used)} / {formatBytes(sys?.memory?.total)}
+                                    </div>
+                                    <div className="metric-bar" style={{marginTop: '12px'}}>
+                                        <div className="metric-bar-fill memory" style={{width: `${memory}%`}} />
+                                    </div>
+                                </div>
+
+                                <div className="dashboard-card">
+                                    <div className="dashboard-card-title">
+                                        <span>💿</span> 磁盘使用
+                                    </div>
+                                    <div className="dashboard-card-value">
+                                        {sys?.disks?.[0]?.usage_percent?.toFixed(1) || 0}%
+                                    </div>
+                                    <div className="dashboard-card-subtitle">
+                                        {formatBytes(sys?.disks?.[0]?.used)} / {formatBytes(sys?.disks?.[0]?.total)}
+                                    </div>
+                                    <div className="metric-bar" style={{marginTop: '12px'}}>
+                                        <div className="metric-bar-fill disk" style={{width: `${sys?.disks?.[0]?.usage_percent || 0}%`}} />
+                                    </div>
+                                </div>
+
+                                <div className="dashboard-card">
+                                    <div className="dashboard-card-title">
+                                        <span>⏱️</span> 运行时间
+                                    </div>
+                                    <div className="dashboard-card-value" style={{fontSize: '20px'}}>
+                                        {uptime}
+                                    </div>
+                                    <div className="dashboard-card-subtitle">
+                                        {sys?.system_info?.os_name} {sys?.system_info?.arch}
+                                    </div>
+                                </div>
+
+                                <div className="dashboard-card">
+                                    <div className="dashboard-card-title">
+                                        <span>⬆️</span> 上传速度
+                                    </div>
+                                    <div className="dashboard-card-value" style={{fontSize: '20px'}}>
+                                        {formatSpeed(agent.network_speed?.upload || 0)}
+                                    </div>
+                                    <div className="dashboard-card-subtitle">
+                                        总计 {formatBytesShort(sys?.network?.bytes_sent)}
+                                    </div>
+                                </div>
+
+                                <div className="dashboard-card">
+                                    <div className="dashboard-card-title">
+                                        <span>⬇️</span> 下载速度
+                                    </div>
+                                    <div className="dashboard-card-value" style={{fontSize: '20px'}}>
+                                        {formatSpeed(agent.network_speed?.download || 0)}
+                                    </div>
+                                    <div className="dashboard-card-subtitle">
+                                        总计 {formatBytesShort(sys?.network?.bytes_recv)}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 图表网格 */}
+                            <div className="charts-row">
+                                <div className="chart-card">
+                                    <div className="chart-card-header">
+                                        <div className="chart-card-title">
+                                            <span>📈</span> CPU 使用率
+                                        </div>
+                                        <div className="chart-card-value" style={{fontSize: '18px', color: '#0066ff'}}>
+                                            {cpu}%
+                                        </div>
+                                    </div>
+                                    <div className="chart-card-body">
+                                        <Chart data={history} title="CPU" color="#0066ff" height={180} />
+                                    </div>
+                                </div>
+
+                                <div className="chart-card">
+                                    <div className="chart-card-header">
+                                        <div className="chart-card-title">
+                                            <span>📊</span> 内存使用率
+                                        </div>
+                                        <div className="chart-card-value" style={{fontSize: '18px', color: '#f59e0b'}}>
+                                            {memory}%
+                                        </div>
+                                    </div>
+                                    <div className="chart-card-body">
+                                        <Chart data={history} title="内存" color="#f59e0b" height={180} />
+                                    </div>
+                                </div>
+
+                                <div className="chart-card">
+                                    <div className="chart-card-header">
+                                        <div className="chart-card-title">
+                                            <span>🔼</span> 上传速度
+                                        </div>
+                                        <div className="chart-card-value" style={{fontSize: '18px', color: '#10b981'}}>
+                                            {formatSpeed(agent.network_speed?.upload || 0)}
+                                        </div>
+                                    </div>
+                                    <div className="chart-card-body">
+                                        <Chart data={history} title="上传速度" color="#10b981" height={180} />
+                                    </div>
+                                </div>
+
+                                <div className="chart-card">
+                                    <div className="chart-card-header">
+                                        <div className="chart-card-title">
+                                            <span>🔽</span> 下载速度
+                                        </div>
+                                        <div className="chart-card-value" style={{fontSize: '18px', color: '#8b5cf6'}}>
+                                            {formatSpeed(agent.network_speed?.download || 0)}
+                                        </div>
+                                    </div>
+                                    <div className="chart-card-body">
+                                        <Chart data={history} title="下载速度" color="#8b5cf6" height={180} />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 探针资源占用 */}
                             {agentMetrics && (
                                 <div className="section">
-                                    <h3 className="section-title">探针资源占用</h3>
+                                    <h3 className="section-title">
+                                        <span className="icon">📡</span>
+                                        探针资源占用
+                                    </h3>
                                     <div className="info-grid">
                                         <div className="info-item">
                                             <div className="info-item-label">CPU 使用率</div>
@@ -907,19 +1241,13 @@
                                 </div>
                             )}
 
-                            <div className="section">
-                                <h3 className="section-title">CPU 使用率</h3>
-                                <Chart data={history} title="CPU" color="#0066ff" />
-                            </div>
-
-                            <div className="section">
-                                <h3 className="section-title">内存使用率</h3>
-                                <Chart data={history} title="内存" color="#f59e0b" />
-                            </div>
-
+                            {/* 系统信息 */}
                             {sys?.system_info && (
                                 <div className="section">
-                                    <h3 className="section-title">系统信息</h3>
+                                    <h3 className="section-title">
+                                        <span className="icon">⚙️</span>
+                                        系统信息
+                                    </h3>
                                     <div className="info-grid">
                                         <div className="info-item">
                                             <div className="info-item-label">操作系统</div>
@@ -934,48 +1262,21 @@
                                             <div className="info-item-value">{sys.system_info.arch}</div>
                                         </div>
                                         <div className="info-item">
-                                            <div className="info-item-label">运行时间</div>
-                                            <div className="info-item-value">{formatUptime(sys.system_info.uptime)}</div>
+                                            <div className="info-item-label">CPU 型号</div>
+                                            <div className="info-item-value">{sys.cpu?.model || 'N/A'}</div>
                                         </div>
                                         <div className="info-item">
-                                            <div className="info-item-label">CPU 核心</div>
-                                            <div className="info-item-value">{sys.cpu?.core_count || 'N/A'}</div>
+                                            <div className="info-item-label">CPU 频率</div>
+                                            <div className="info-item-value">{sys.cpu?.frequency?.toFixed(0) || 'N/A'} MHz</div>
                                         </div>
                                         <div className="info-item">
-                                            <div className="info-item-label">总内存</div>
-                                            <div className="info-item-value">{formatBytes(sys.memory?.total)}</div>
+                                            <div className="info-item-label">主机名</div>
+                                            <div className="info-item-value">{agent.hostname}</div>
                                         </div>
                                     </div>
                                 </div>
                             )}
 
-                            {sys?.processes?.length > 0 && (
-                                <div className="section">
-                                    <h3 className="section-title">Top 进程</h3>
-                                    <table className="table">
-                                        <thead>
-                                            <tr>
-                                                <th>PID</th>
-                                                <th>进程名</th>
-                                                <th>CPU</th>
-                                                <th>内存</th>
-                                                <th>状态</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {sys.processes.map(proc => (
-                                                <tr key={proc.pid}>
-                                                    <td>{proc.pid}</td>
-                                                    <td>{proc.name}</td>
-                                                    <td>{proc.cpu_usage?.toFixed(1)}%</td>
-                                                    <td>{formatBytes(proc.memory)}</td>
-                                                    <td>{proc.status}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
                         </div>
                     </div>
                 </div>
@@ -1000,6 +1301,8 @@
 
                     // 计算网络速度
                     let networkSpeed = { upload: 0, download: 0 };
+                    let prevSpeed = { upload: 0, download: 0 };
+
                     if (prevAgent?.system?.network && metrics.system?.network) {
                         const prevNet = prevAgent.system.network;
                         const currNet = metrics.system.network;
@@ -1016,11 +1319,15 @@
                                 download: Math.max(0, downloadDiff / timeDiff)
                             };
                         }
+
+                        // 保存上一次的速度用于比较趋势
+                        prevSpeed = prevAgent.network_speed || { upload: 0, download: 0 };
                     }
 
                     newAgents.set(agentId, {
                         ...metrics,
-                        network_speed: networkSpeed
+                        network_speed: networkSpeed,
+                        prev_network_speed: prevSpeed
                     });
                     return newAgents;
                 });
