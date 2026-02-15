@@ -15,13 +15,32 @@
 
 ### 编译
 
+项目提供两种编译方式：
+
+**方式一：编译独立二进制（推荐）**
+
 ```bash
-cargo build --release
+# 编译 Server（中心服务器）
+cargo build --release --bin iris-server
+
+# 编译 Agent（监控探针）
+cargo build --release --bin iris-agent
+```
+
+**方式二：编译统一二进制**
+
+```bash
+# 编译包含 Agent 和 Server 的统一二进制
+cargo build --release --bin iris
 ```
 
 ### 运行 Server（中心服务器）
 
 ```bash
+# 使用独立二进制
+./target/release/iris-server --addr 0.0.0.0:50051
+
+# 或使用统一二进制
 ./target/release/iris server --addr 0.0.0.0:50051
 ```
 
@@ -33,15 +52,19 @@ Server 会同时启动：
 ### 运行 Agent（被监控服务器）
 
 ```bash
+# 使用独立二进制
+./target/release/iris-agent --server http://your-server:50051 --interval 10
+
+# 或使用统一二进制
 ./target/release/iris agent --server http://your-server:50051 --interval 10
 ```
 
 ## 命令行参数
 
-### Server 模式
+### iris-server（独立二进制）
 
 ```bash
-iris server [OPTIONS]
+iris-server [OPTIONS]
 
 Options:
   -a, --addr <ADDR>  gRPC 监听地址 [default: 0.0.0.0:50051]
@@ -50,10 +73,10 @@ Options:
 注意：HTTP API 端口为 gRPC 端口 + 1
 ```
 
-### Agent 模式
+### iris-agent（独立二进制）
 
 ```bash
-iris agent [OPTIONS]
+iris-agent [OPTIONS]
 
 Options:
   -s, --server <SERVER>      Server 地址 [default: http://127.0.0.1:50051]
@@ -114,6 +137,17 @@ curl "http://localhost:50052/api/agents/agent-hostname/metrics/history?limit=100
 - 📱 响应式设计：支持移动端访问
 
 详细说明请查看 [web/README.md](web/README.md)
+
+## 持久化运行
+
+将 Iris 配置为系统服务，支持开机自启和自动重启：
+
+- **Linux (systemd)**: 推荐用于生产环境
+- **macOS (launchd)**: 适用于 macOS 系统
+- **Docker**: 容器化部署
+- **nohup**: 快速临时方案
+
+详细部署指南请查看 [deploy/DEPLOY.md](deploy/DEPLOY.md)
 
 ## 开发
 
