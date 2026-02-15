@@ -8,6 +8,7 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/opt/iris
+Environment="RUST_LOG=info"
 ExecStart=/opt/iris/iris-agent --server http://your-server:50051 --interval 10
 Restart=always
 RestartSec=10

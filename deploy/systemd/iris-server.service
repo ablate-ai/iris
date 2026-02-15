@@ -8,6 +8,7 @@ Type=simple
 User=iris
 Group=iris
 WorkingDirectory=/opt/iris
+Environment="RUST_LOG=info"
 ExecStart=/opt/iris/iris-server --addr 0.0.0.0:50051
 Restart=always
 RestartSec=10
