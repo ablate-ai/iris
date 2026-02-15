@@ -139,6 +139,32 @@
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .extra-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            font-size: 12px;
+            color: #666;
+            padding-top: 10px;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        .extra-info-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .extra-info-item .label {
+            color: #999;
+        }
+
+        .extra-info-item .value {
+            font-weight: 600;
+            color: #333;
         }
 
         .metric {
@@ -414,6 +440,36 @@
                                      :style="{width: agent.metrics.memory + '%'}"></div>
                             </div>
                         </div>
+                        <div class="metric" v-if="agent.metrics.disk !== undefined">
+                            <div class="metric-label">磁盘</div>
+                            <div class="metric-value">{{ agent.metrics.disk }}%</div>
+                            <div class="metric-bar">
+                                <div class="metric-bar-fill disk-bar"
+                                     :style="{width: agent.metrics.disk + '%'}"></div>
+                            </div>
+                        </div>
+                        <div class="metric" v-if="agent.metrics.load !== undefined">
+                            <div class="metric-label">负载 (1m)</div>
+                            <div class="metric-value">{{ agent.metrics.load }}</div>
+                        </div>
+                    </div>
+                    <div class="extra-info" v-if="agent.extra_info">
+                        <div class="extra-info-item" v-if="agent.extra_info.uptime">
+                            <span class="label">运行:</span>
+                            <span class="value">{{ agent.extra_info.uptime }}</span>
+                        </div>
+                        <div class="extra-info-item" v-if="agent.extra_info.cpu_cores">
+                            <span class="label">核心:</span>
+                            <span class="value">{{ agent.extra_info.cpu_cores }}</span>
+                        </div>
+                        <div class="extra-info-item" v-if="agent.extra_info.network_sent">
+                            <span class="label">↑:</span>
+                            <span class="value">{{ agent.extra_info.network_sent }}</span>
+                        </div>
+                        <div class="extra-info-item" v-if="agent.extra_info.network_recv">
+                            <span class="label">↓:</span>
+                            <span class="value">{{ agent.extra_info.network_recv }}</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -561,7 +617,7 @@
                     selectedAgent: null,
                     selectedAgentId: null,
                     history: [],
-                    apiBase: 'http://localhost:50052',
+                    apiBase: '',
                     refreshInterval: null,
                     cpuChart: null,
                     memoryChart: null
@@ -596,11 +652,20 @@
                                 const metricsData = await metricsRes.json();
 
                                 if (metricsData.success) {
+                                    const sys = metricsData.data.system;
                                     agent.metrics = {
-                                        cpu: metricsData.data.system?.cpu?.usage_percent?.toFixed(1) || 0,
-                                        memory: metricsData.data.system?.memory?.usage_percent?.toFixed(1) || 0
+                                        cpu: sys?.cpu?.usage_percent?.toFixed(1) || 0,
+                                        memory: sys?.memory?.usage_percent?.toFixed(1) || 0,
+                                        disk: sys?.disks?.[0]?.usage_percent?.toFixed(1),
+                                        load: sys?.cpu?.load_avg_1?.toFixed(2)
                                     };
-                                    agent.system_info = metricsData.data.system?.system_info;
+                                    agent.system_info = sys?.system_info;
+                                    agent.extra_info = {
+                                        uptime: this.formatUptimeShort(sys?.system_info?.uptime),
+                                        cpu_cores: sys?.cpu?.core_count,
+                                        network_sent: this.formatBytesShort(sys?.network?.bytes_sent),
+                                        network_recv: this.formatBytesShort(sys?.network?.bytes_recv)
+                                    };
                                 }
                             }
 
@@ -743,6 +808,32 @@
                 formatNumber(num) {
                     if (!num) return '0';
                     return num.toLocaleString('zh-CN');
+                },
+                formatUptimeShort(seconds) {
+                    if (!seconds) return null;
+                    const days = Math.floor(seconds / 86400);
+                    const hours = Math.floor((seconds % 86400) / 3600);
+
+                    if (days > 0) {
+                        return `${days}天${hours}时`;
+                    } else if (hours > 0) {
+                        return `${hours}小时`;
+                    } else {
+                        return `${Math.floor(seconds / 60)}分钟`;
+                    }
+                },
+                formatBytesShort(bytes) {
+                    if (!bytes) return null;
+                    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+                    let size = bytes;
+                    let unitIndex = 0;
+
+                    while (size >= 1024 && unitIndex < units.length - 1) {
+                        size /= 1024;
+                        unitIndex++;
+                    }
+
+                    return `${size.toFixed(1)}${units[unitIndex]}`;
                 }
             },
             mounted() {
