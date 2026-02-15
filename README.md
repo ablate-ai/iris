@@ -15,13 +15,44 @@
 
 ### 一键安装（推荐）
 
+安装脚本会自动：
+- ✅ 下载并安装二进制文件到 `/usr/local/bin`
+- ✅ 创建 systemd 服务（支持开机自启）
+- ✅ **立即启动服务**
+- ✅ 验证启动状态
+
 ```bash
+# 安装 Server（中心服务器）
 curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | bash
+
+# 安装 Agent（被监控服务器），连接到指定 Server
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
+```
+
+**安装完成后**：
+- 🌐 Web UI: http://localhost:50052
+- 📊 HTTP API: http://localhost:50052/api/agents
+
+**管理服务**：
+```bash
+# 查看状态
+sudo systemctl status iris-server
+
+# 查看日志
+sudo journalctl -u iris-server -f
+
+# 重启/停止服务
+sudo systemctl restart iris-server
+sudo systemctl stop iris-server
 ```
 
 更多安装选项请查看 [安装文档](docs/INSTALL.md)
 
-### 编译
+---
+
+### 手动编译运行
+
+如果不使用一键安装，也可以手动编译运行：
 
 项目提供两种编译方式：
 
@@ -42,7 +73,7 @@ cargo build --release --bin iris-agent
 cargo build --release --bin iris
 ```
 
-### 运行 Server（中心服务器）
+#### 手动运行 Server（中心服务器）
 
 ```bash
 # 使用独立二进制
@@ -52,12 +83,12 @@ cargo build --release --bin iris
 ./target/release/iris server --addr 0.0.0.0:50051
 ```
 
-Server 会同时启动：
+**Server 启动后提供**：
 - **gRPC 服务**: 端口 50051（接收 Agent 上报）
 - **HTTP API**: 端口 50052（查询监控数据）
 - **Web UI**: http://localhost:50052（监控面板）
 
-### 运行 Agent（被监控服务器）
+#### 手动运行 Agent（被监控服务器）
 
 ```bash
 # 使用独立二进制
