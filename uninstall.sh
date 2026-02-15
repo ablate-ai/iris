@@ -205,13 +205,27 @@ main() {
 
     # 确认卸载
     if [ -z "${AUTO_CONFIRM:-}" ]; then
-        echo -n "确认要卸载 ${components[*]}? [y/N] "
-        read -r response
-        # 清理输入：去除首尾空格，只取第一个字符
-        response=$(echo "$response" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | cut -c1)
-        if [[ ! "$response" =~ ^[Yy]$ ]]; then
-            info "取消卸载"
-            exit 0
+        # 检测是否在交互式终端中运行
+        if [ ! -t 0 ]; then
+            # 非交互式环境（通过管道执行），从终端读取
+            echo -n "确认要卸载 ${components[*]}? [y/N] "
+            read -r response < /dev/tty
+            # 清理输入：去除首尾空格，只取第一个字符
+            response=$(echo "$response" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | cut -c1)
+            if [[ ! "$response" =~ ^[Yy]$ ]]; then
+                info "取消卸载"
+                exit 0
+            fi
+        else
+            # 交互式终端，正常读取
+            echo -n "确认要卸载 ${components[*]}? [y/N] "
+            read -r response
+            # 清理输入：去除首尾空格，只取第一个字符
+            response=$(echo "$response" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | cut -c1)
+            if [[ ! "$response" =~ ^[Yy]$ ]]; then
+                info "取消卸载"
+                exit 0
+            fi
         fi
     fi
 
