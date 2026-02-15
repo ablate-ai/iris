@@ -156,14 +156,23 @@ install_web_ui() {
     cd "$tmp_dir"
     tar -xzf web.tar.gz
 
-    # 创建 Web 目录
+    # 检测解压后的目录结构
+    if [ -d "web" ]; then
+        # 如果有 web 目录，使用其内容
+        SRC_DIR="web"
+    else
+        # 否则直接使用当前目录
+        SRC_DIR="."
+    fi
+
+    # 创建 Web 目录并复制文件
     if [ ! -w "$(dirname "$WEB_DIR")" ]; then
         warning "需要 sudo 权限安装到 ${WEB_DIR}"
         sudo mkdir -p "$WEB_DIR"
-        sudo cp -r web/* "$WEB_DIR/"
+        sudo cp -r "$SRC_DIR"/* "$WEB_DIR/"
     else
         mkdir -p "$WEB_DIR"
-        cp -r web/* "$WEB_DIR/"
+        cp -r "$SRC_DIR"/* "$WEB_DIR/"
     fi
 
     # 清理临时文件
