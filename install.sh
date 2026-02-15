@@ -38,6 +38,30 @@ has_systemd() {
     command -v systemctl &> /dev/null && systemctl --version &> /dev/null
 }
 
+# 检测是否可以使用 sudo（或者当前是 root）
+can_sudo_or_root() {
+    # 如果是 root 用户
+    if [ "$(id -u)" = "0" ]; then
+        return 0
+    fi
+
+    # 如果有 sudo 命令
+    if command -v sudo &> /dev/null; then
+        return 0
+    fi
+
+    return 1
+}
+
+# 获取前缀命令（如果需要就加 sudo）
+get_prefix_cmd() {
+    if [ "$(id -u)" = "0" ]; then
+        echo ""
+    else
+        echo "sudo"
+    fi
+}
+
 # 创建并启动 systemd 服务
 setup_systemd_service() {
     local service_name=$1
@@ -48,11 +72,21 @@ setup_systemd_service() {
         return 1
     fi
 
+    # 检查是否有权限创建服务
+    if ! can_sudo_or_root; then
+        warning "检测到 systemd 但没有权限创建服务（需要 root 或 sudo）"
+        return 1
+    fi
+
     info "检测到 systemd，创建服务: ${service_name}"
 
+    local prefix=$(get_prefix_cmd)
+
     # 创建 systemd service 文件
-    warning "需要 sudo 权限创建 systemd 服务"
-    sudo tee "/etc/systemd/system/${service_name}.service" > /dev/null <<EOF
+    if [ -n "$prefix" ]; then
+        warning "需要 ${prefix} 权限创建 systemd 服务"
+    fi
+    ${prefix} tee "/etc/systemd/system/${service_name}.service" > /dev/null <<EOF
 [Unit]
 Description=Iris ${binary_name}
 After=network.target
@@ -72,18 +106,18 @@ EOF
 
     # 重载并启动服务
     info "重载 systemd 并启动 ${service_name}..."
-    sudo systemctl daemon-reload
-    sudo systemctl enable "${service_name}"
-    sudo systemctl restart "${service_name}"
+    ${prefix} systemctl daemon-reload
+    ${prefix} systemctl enable "${service_name}"
+    ${prefix} systemctl restart "${service_name}"
 
     # 等待启动
     sleep 2
 
-    if systemctl is-active --quiet "${service_name}"; then
+    if ${prefix} systemctl is-active --quiet "${service_name}"; then
         success "${service_name} 已启动"
         return 0
     else
-        error "${service_name} 启动失败，请查看日志: sudo journalctl -u ${service_name} -n 50"
+        error "${service_name} 启动失败，请查看日志: ${prefix} journalctl -u ${service_name} -n 50"
     fi
 }
 
@@ -261,9 +295,9 @@ main() {
 
         # 尝试使用 systemd 启动
         if ! setup_systemd_service "iris-agent" "iris-agent" "--server ${IRIS_SERVER}"; then
-            # 没有 systemd 或启动失败，显示手动运行提示
+            # 没有 systemd 或没有权限，显示手动运行提示
             echo ""
-            warning "未检测到 systemd，请手动启动 agent:"
+            warning "无法创建 systemd 服务，请手动启动 agent:"
             echo -e "  ${GREEN}iris-agent --server ${IRIS_SERVER}${NC}"
             echo ""
         fi
@@ -274,9 +308,9 @@ main() {
 
         # 尝试使用 systemd 启动
         if ! setup_systemd_service "iris-server" "iris-server" "--addr 0.0.0.0:50051"; then
-            # 没有 systemd 或启动失败，显示手动运行提示
+            # 没有 systemd 或没有权限，显示手动运行提示
             echo ""
-            warning "未检测到 systemd，请手动启动 server:"
+            warning "无法创建 systemd 服务，请手动启动 server:"
             echo -e "  ${GREEN}iris-server --addr 0.0.0.0:50051${NC}"
             echo ""
             echo -e "在其他机器上安装 agent:"
@@ -294,11 +328,18 @@ main() {
         local service_name="iris-server"
         [ -n "$IRIS_SERVER" ] && service_name="iris-agent"
 
+        local prefix=$(get_prefix_cmd)
+        if [ -z "$prefix" ]; then
+            prefix=""
+        else
+            prefix="${prefix} "
+        fi
+
         echo -e "管理命令:"
-        echo -e "  查看状态: ${YELLOW}sudo systemctl status ${service_name}${NC}"
-        echo -e "  查看日志: ${YELLOW}sudo journalctl -u ${service_name} -f${NC}"
-        echo -e "  重启服务: ${YELLOW}sudo systemctl restart ${service_name}${NC}"
-        echo -e "  停止服务: ${YELLOW}sudo systemctl stop ${service_name}${NC}"
+        echo -e "  查看状态: ${YELLOW}${prefix}systemctl status ${service_name}${NC}"
+        echo -e "  查看日志: ${YELLOW}${prefix}journalctl -u ${service_name} -f${NC}"
+        echo -e "  重启服务: ${YELLOW}${prefix}systemctl restart ${service_name}${NC}"
+        echo -e "  停止服务: ${YELLOW}${prefix}systemctl stop ${service_name}${NC}"
         echo ""
     fi
 
