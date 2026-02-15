@@ -57,7 +57,7 @@ detect_platform() {
 
 # 获取最新版本号
 get_latest_version() {
-    info "获取最新版本..."
+    info "获取最新版本..." >&2
     local version
     version=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
