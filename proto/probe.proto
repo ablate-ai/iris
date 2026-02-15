@@ -113,6 +113,9 @@ message SystemInfo {
   string kernel_version = 3;    // 内核版本
   string arch = 4;              // 系统架构
   uint64 uptime = 5;            // 运行时间（秒）
+  string cpu_model = 6;         // CPU 型号
+  double cpu_frequency = 7;     // CPU 频率（MHz）
+  string hostname = 8;          // 主机名
 }
 
 // 探针自身指标

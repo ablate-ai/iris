@@ -179,12 +179,85 @@ fn collect_process_metrics(sys: &System) -> Vec<ProcessMetrics> {
         .collect()
 }
 
-fn collect_system_info(_sys: &System) -> SystemInfo {
+fn collect_system_info(sys: &System) -> SystemInfo {
+    // 获取 CPU 信息
+    let (cpu_model, cpu_frequency) = if let Some(cpu) = sys.cpus().first() {
+        (
+            cpu.brand().to_string(),
+            cpu.frequency() as f64,
+        )
+    } else {
+        ("Unknown".to_string(), 0.0)
+    };
+
+    // 如果 sysinfo 获取失败（返回空字符串或 0），尝试直接读取 /proc/cpuinfo（仅 Linux）
+    #[cfg(target_os = "linux")]
+    let (cpu_model, cpu_frequency) = {
+        if cpu_model.is_empty() || cpu_model == "Unknown" || cpu_frequency == 0.0 {
+            if let Some((model, freq)) = read_cpu_info_from_proc() {
+                let final_model = if !model.is_empty() && cpu_model == "Unknown" {
+                    model
+                } else {
+                    cpu_model
+                };
+                let final_freq = if freq > 0.0 && cpu_frequency == 0.0 {
+                    freq
+                } else {
+                    cpu_frequency
+                };
+                (final_model, final_freq)
+            } else {
+                (cpu_model, cpu_frequency)
+            }
+        } else {
+            (cpu_model, cpu_frequency)
+        }
+    };
+
+    // 获取主机名
+    let hostname = System::host_name().unwrap_or_else(|| "Unknown".to_string());
+
     SystemInfo {
         os_name: System::name().unwrap_or_else(|| "Unknown".to_string()),
         os_version: System::os_version().unwrap_or_else(|| "Unknown".to_string()),
         kernel_version: System::kernel_version().unwrap_or_else(|| "Unknown".to_string()),
         arch: System::cpu_arch().unwrap_or_else(|| "Unknown".to_string()),
         uptime: System::uptime(),
+        cpu_model,
+        cpu_frequency,
+        hostname,
+    }
+}
+
+/// 直接从 /proc/cpuinfo 读取 CPU 信息（Linux 备用方案）
+#[cfg(target_os = "linux")]
+fn read_cpu_info_from_proc() -> Option<(String, f64)> {
+    use std::fs;
+
+    let content = fs::read_to_string("/proc/cpuinfo").ok()?;
+    let mut model = String::new();
+    let mut freq = 0.0;
+
+    for line in content.lines() {
+        if line.starts_with("model name") {
+            if let Some(value) = line.split(':').nth(1) {
+                model = value.trim().to_string();
+            }
+        } else if line.starts_with("cpu MHz") {
+            if let Some(value) = line.split(':').nth(1) {
+                freq = value.trim().parse().unwrap_or(0.0);
+            }
+        }
+
+        // 找到两个值就可以退出了
+        if !model.is_empty() && freq > 0.0 {
+            break;
+        }
+    }
+
+    if !model.is_empty() || freq > 0.0 {
+        Some((model, freq))
+    } else {
+        None
     }
 }

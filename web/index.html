@@ -1263,15 +1263,15 @@
                                         </div>
                                         <div className="info-item">
                                             <div className="info-item-label">CPU 型号</div>
-                                            <div className="info-item-value">{sys.cpu?.model || 'N/A'}</div>
+                                            <div className="info-item-value">{sys.system_info.cpu_model || 'N/A'}</div>
                                         </div>
                                         <div className="info-item">
                                             <div className="info-item-label">CPU 频率</div>
-                                            <div className="info-item-value">{sys.cpu?.frequency?.toFixed(0) || 'N/A'} MHz</div>
+                                            <div className="info-item-value">{sys.system_info.cpu_frequency?.toFixed(0) || 'N/A'} MHz</div>
                                         </div>
                                         <div className="info-item">
                                             <div className="info-item-label">主机名</div>
-                                            <div className="info-item-value">{agent.hostname}</div>
+                                            <div className="info-item-value">{sys.system_info.hostname || agent.hostname}</div>
                                         </div>
                                     </div>
                                 </div>
