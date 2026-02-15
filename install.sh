@@ -97,7 +97,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=${INSTALL_DIR}/${binary_name} ${exec_args}
-${env_vars}Restart=always
+${env_vars}
+Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
@@ -307,7 +308,7 @@ main() {
         local env_vars=""
         if [ -n "$IRIS_HOSTNAME" ]; then
             info "使用自定义 hostname: ${IRIS_HOSTNAME}"
-            env_vars="Environment=\"IRIS_HOSTNAME=${IRIS_HOSTNAME}\"\n"
+            env_vars="Environment=\"IRIS_HOSTNAME=${IRIS_HOSTNAME}\""
         fi
 
         # 尝试使用 systemd 启动
