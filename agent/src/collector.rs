@@ -1,13 +1,27 @@
 use common::proto::{
     CpuMetrics, DiskMetrics, MemoryMetrics, NetworkMetrics, ProcessMetrics, SystemMetrics,
-    SystemInfo,
+    SystemInfo, AgentMetrics,
 };
-use sysinfo::{System, Networks, Disks};
+use sysinfo::{System, Networks, Disks, Pid, ProcessRefreshKind, ProcessesToUpdate};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
+
+// 全局统计
+static METRICS_SENT: AtomicU64 = AtomicU64::new(0);
+static ERRORS_COUNT: AtomicU64 = AtomicU64::new(0);
+
+// 探针启动时间
+static AGENT_START_TIME: once_cell::sync::Lazy<Instant> =
+    once_cell::sync::Lazy::new(Instant::now);
 
 /// 采集系统指标
 pub fn collect_metrics() -> SystemMetrics {
+    let start = Instant::now();
+
     let mut sys = System::new_all();
     sys.refresh_all();
+
+    let collection_time_ms = start.elapsed().as_millis() as u64;
 
     SystemMetrics {
         cpu: Some(collect_cpu_metrics(&sys)),
@@ -16,8 +30,49 @@ pub fn collect_metrics() -> SystemMetrics {
         network: Some(collect_network_metrics()),
         processes: collect_process_metrics(&sys),
         system_info: Some(collect_system_info(&sys)),
+        agent_metrics: Some(collect_agent_metrics(&mut sys, collection_time_ms)),
     }
 }
+
+/// 采集探针自身指标
+fn collect_agent_metrics(sys: &mut System, collection_time_ms: u64) -> AgentMetrics {
+    let current_pid = Pid::from_u32(std::process::id());
+
+    // 刷新当前进程信息
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[current_pid]),
+        false,
+        ProcessRefreshKind::everything()
+    );
+
+    let process = sys.process(current_pid);
+
+    let (cpu_usage, memory_usage) = if let Some(proc) = process {
+        (proc.cpu_usage() as f64, proc.memory())
+    } else {
+        (0.0, 0)
+    };
+
+    AgentMetrics {
+        cpu_usage,
+        memory_usage,
+        collection_time_ms,
+        uptime_seconds: AGENT_START_TIME.elapsed().as_secs(),
+        metrics_sent: METRICS_SENT.load(Ordering::Relaxed),
+        errors_count: ERRORS_COUNT.load(Ordering::Relaxed),
+    }
+}
+
+/// 增加发送成功计数
+pub fn increment_metrics_sent() {
+    METRICS_SENT.fetch_add(1, Ordering::Relaxed);
+}
+
+/// 增加错误计数
+pub fn increment_errors() {
+    ERRORS_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
 
 fn collect_cpu_metrics(sys: &System) -> CpuMetrics {
     let cpus = sys.cpus();

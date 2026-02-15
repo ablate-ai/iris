@@ -52,6 +52,7 @@ message SystemMetrics {
   NetworkMetrics network = 4;
   repeated ProcessMetrics processes = 5;
   SystemInfo system_info = 6;       // 系统信息
+  AgentMetrics agent_metrics = 7;  // 探针自身指标
 }
 
 // CPU 指标
@@ -112,4 +113,14 @@ message SystemInfo {
   string kernel_version = 3;    // 内核版本
   string arch = 4;              // 系统架构
   uint64 uptime = 5;            // 运行时间（秒）
+}
+
+// 探针自身指标
+message AgentMetrics {
+  double cpu_usage = 1;           // 探针进程 CPU 使用率
+  uint64 memory_usage = 2;        // 探针进程内存使用（字节）
+  uint64 collection_time_ms = 3;  // 本次采集耗时（毫秒）
+  uint64 uptime_seconds = 4;      // 探针运行时长（秒）
+  uint64 metrics_sent = 5;        // 已发送指标次数
+  uint64 errors_count = 6;        // 错误次数
 }

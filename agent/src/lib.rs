@@ -76,9 +76,11 @@ impl Agent {
 
             if tx.send(request).await.is_err() {
                 error!("发送指标失败，流已关闭");
+                collector::increment_errors();
                 break;
             }
 
+            collector::increment_metrics_sent();
             info!("指标已发送");
         }
 
