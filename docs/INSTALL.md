@@ -5,13 +5,13 @@
 ### 快速安装（推荐）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | bash
 ```
 
 ### 安全安装（先下载再执行）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh -o install.sh
 chmod +x install.sh
 ./install.sh
 ```
@@ -21,32 +21,32 @@ chmod +x install.sh
 ### 安装指定版本
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh | VERSION=v0.1.0 bash
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | VERSION=v0.1.0 bash
 ```
 
 ### 只安装 Agent
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh | INSTALL_SERVER=false bash
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | INSTALL_SERVER=false bash
 ```
 
 ### 只安装 Server
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh | INSTALL_AGENT=false bash
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | INSTALL_AGENT=false bash
 ```
 
 ### 安装到自定义目录
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh | INSTALL_DIR=~/.local/bin bash
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | INSTALL_DIR=~/.local/bin bash
 ```
 
 ### 组合使用
 
 ```bash
 # 安装 v0.2.0 版本的 agent 到 ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | \
   VERSION=v0.2.0 INSTALL_SERVER=false INSTALL_DIR=~/.local/bin bash
 ```
 
@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh 
 
 如果一键安装脚本不适用，可以手动下载：
 
-1. 访问 [Releases 页面](https://github.com/your-username/iris/releases)
+1. 访问 [Releases 页面](https://github.com/ablate-ai/iris/releases)
 2. 下载对应平台的压缩包
 3. 解压并移动到 PATH 目录：
 
@@ -114,7 +114,7 @@ rm ~/.local/bin/iris-server
 如果遇到权限错误，可以安装到用户目录：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | \
   INSTALL_DIR=~/.local/bin bash
 ```
 
@@ -156,5 +156,5 @@ echo 'export PATH="$PATH:/usr/local/bin"' >> ~/.zshrc
 重新运行安装脚本即可更新到最新版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | bash
 ```

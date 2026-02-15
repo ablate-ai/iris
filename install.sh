@@ -9,7 +9,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 默认配置
-REPO="your-username/iris"  # 请替换为实际的 GitHub 仓库
+REPO="ablate-ai/iris"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 VERSION="${VERSION:-latest}"
 INSTALL_AGENT="${INSTALL_AGENT:-true}"

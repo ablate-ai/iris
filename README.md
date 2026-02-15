@@ -16,7 +16,7 @@
 ### 一键安装（推荐）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/iris/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | bash
 ```
 
 更多安装选项请查看 [安装文档](docs/INSTALL.md)
