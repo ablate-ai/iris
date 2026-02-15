@@ -11,7 +11,6 @@ NC='\033[0m' # No Color
 # 默认配置
 REPO="ablate-ai/iris"
 INSTALL_DIR="/usr/local/bin"
-WEB_DIR="/opt/iris/web"
 VERSION="${VERSION:-latest}"
 
 # k3s 风格：配置了 IRIS_SERVER 就是 agent，否则是 server
@@ -186,53 +185,6 @@ install_binary() {
     success "${binary_name} 已安装到 ${INSTALL_DIR}/${binary_name}${ext}"
 }
 
-# 下载并安装 Web UI
-install_web_ui() {
-    local version=$1
-
-    info "安装 Web UI..."
-
-    # 构建下载 URL
-    local download_url="${GITHUB_PROXY}https://github.com/${REPO}/releases/download/${version}/web.tar.gz"
-    local tmp_dir=$(mktemp -d)
-
-    info "下载 web.tar.gz..."
-    if ! curl -fsSL -H "User-Agent: iris-installer" "$download_url" -o "${tmp_dir}/web.tar.gz"; then
-        warning "下载 Web UI 失败，跳过"
-        rm -rf "$tmp_dir"
-        return 0
-    fi
-
-    # 解压
-    info "解压 Web UI..."
-    cd "$tmp_dir"
-    tar -xzf web.tar.gz
-
-    # 检测解压后的目录结构
-    if [ -d "web" ]; then
-        # 如果有 web 目录，使用其内容
-        SRC_DIR="web"
-    else
-        # 否则直接使用当前目录
-        SRC_DIR="."
-    fi
-
-    # 创建 Web 目录并复制文件
-    if ! mkdir -p "$WEB_DIR" 2>/dev/null; then
-        warning "需要 sudo 权限安装到 ${WEB_DIR}"
-        sudo mkdir -p "$WEB_DIR"
-        sudo cp -r "$SRC_DIR"/* "$WEB_DIR/"
-    else
-        cp -r "$SRC_DIR"/* "$WEB_DIR/"
-    fi
-
-    # 清理临时文件
-    cd - > /dev/null
-    rm -rf "$tmp_dir"
-
-    success "Web UI 已安装到 ${WEB_DIR}"
-}
-
 # 显示使用说明
 show_usage() {
     cat << EOF
@@ -249,9 +201,8 @@ Iris 一键安装脚本 (k3s 风格)
   IRIS_SERVER     server 地址（设置此值则安装 agent，否则安装 server）
   VERSION         指定版本号（默认: latest）
 
-安装位置:
-  二进制文件:     /usr/local/bin
-  Web UI:         /opt/iris/web
+说明:
+  Web UI 已嵌入二进制文件，无需额外安装
 
 示例:
   # 安装最新版 server
@@ -316,15 +267,13 @@ main() {
         # server 模式
         info "未设置 IRIS_SERVER，安装 server 模式"
         install_binary "iris-server" "$platform" "$VERSION"
-        # 安装 Web UI
-        install_web_ui "$VERSION"
 
         # 尝试使用 systemd 启动
-        if ! setup_systemd_service "iris-server" "iris-server" "--addr 0.0.0.0:50051 --web-dir ${WEB_DIR}"; then
+        if ! setup_systemd_service "iris-server" "iris-server" "--addr 0.0.0.0:50051"; then
             # 没有 systemd 或启动失败，显示手动运行提示
             echo ""
             warning "未检测到 systemd，请手动启动 server:"
-            echo -e "  ${GREEN}iris-server --addr 0.0.0.0:50051 --web-dir ${WEB_DIR}${NC}"
+            echo -e "  ${GREEN}iris-server --addr 0.0.0.0:50051${NC}"
             echo ""
             echo -e "在其他机器上安装 agent:"
             echo -e "  ${YELLOW}curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://<server-ip>:50051 bash${NC}"

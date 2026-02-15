@@ -9,10 +9,6 @@ struct Cli {
     /// gRPC 监听地址
     #[arg(short, long, default_value = "0.0.0.0:50051")]
     addr: String,
-
-    /// Web UI 目录
-    #[arg(short, long)]
-    web_dir: Option<String>,
 }
 
 #[tokio::main]
@@ -27,7 +23,7 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    server::ProbeServer::run(cli.addr, cli.web_dir).await?;
+    server::ProbeServer::run(cli.addr).await?;
 
     Ok(())
 }

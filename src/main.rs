@@ -27,10 +27,6 @@ enum Commands {
         /// gRPC 监听地址
         #[arg(short, long, default_value = "0.0.0.0:50051")]
         addr: String,
-
-        /// Web UI 目录
-        #[arg(short, long)]
-        web_dir: Option<String>,
     },
 }
 
@@ -52,8 +48,8 @@ async fn main() -> Result<()> {
             let agent = agent::Agent::new(server, interval);
             agent.run().await?;
         }
-        Commands::Server { addr, web_dir } => {
-            server::ProbeServer::run(addr, web_dir).await?;
+        Commands::Server { addr } => {
+            server::ProbeServer::run(addr).await?;
         }
     }
 

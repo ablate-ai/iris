@@ -12,9 +12,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
 use tracing::info;
 
+use crate::assets::{serve_asset, serve_index};
 use crate::storage::Storage;
 use common::proto::MetricsRequest;
 
@@ -71,7 +71,7 @@ impl<T: Serialize> ApiResponse<T> {
 }
 
 /// 创建 HTTP API 路由
-pub fn create_router(storage: Storage, broadcast: broadcast::Sender<MetricsRequest>, web_dir: String) -> Router {
+pub fn create_router(storage: Storage, broadcast: broadcast::Sender<MetricsRequest>) -> Router {
     let state = ApiState { storage, broadcast };
 
     let cors = CorsLayer::new()
@@ -79,7 +79,7 @@ pub fn create_router(storage: Storage, broadcast: broadcast::Sender<MetricsReque
         .allow_methods(Any)
         .allow_headers(Any);
 
-    info!("Web UI 目录: {}", web_dir);
+    info!("Web UI: 使用嵌入静态资源");
 
     Router::new()
         .route("/api", get(root))
@@ -87,7 +87,9 @@ pub fn create_router(storage: Storage, broadcast: broadcast::Sender<MetricsReque
         .route("/api/agents", get(list_agents))
         .route("/api/agents/:id/metrics", get(get_agent_metrics))
         .route("/api/agents/:id/metrics/history", get(get_agent_history))
-        .nest_service("/", ServeDir::new(web_dir))
+        .route("/assets/*path", get(serve_asset))
+        .route("/", get(serve_index))
+        .route("/*path", get(serve_asset))
         .layer(cors)
         .with_state(Arc::new(state))
 }

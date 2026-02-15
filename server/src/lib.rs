@@ -10,6 +10,7 @@ use tonic::{transport::Server, Request, Response, Status};
 use tracing::info;
 
 mod api;
+mod assets;
 mod storage;
 
 pub struct ProbeServer {
@@ -26,19 +27,11 @@ impl ProbeServer {
         }
     }
 
-    pub async fn run(addr: String, web_dir: Option<String>) -> Result<()> {
+    pub async fn run(addr: String) -> Result<()> {
         let grpc_addr: std::net::SocketAddr = addr.parse()?;
         let server = ProbeServer::new();
         let storage = server.storage.clone();
         let broadcast = server.broadcast.clone();
-
-        // 确定 Web 目录
-        let web_dir = web_dir.unwrap_or_else(|| {
-            std::env::current_dir()
-                .ok()
-                .and_then(|p| p.join("web").to_str().map(String::from))
-                .unwrap_or_else(|| "./web".to_string())
-        });
 
         // 启动 HTTP API 服务器（端口 +1）
         let http_port = grpc_addr.port() + 1;
@@ -46,7 +39,7 @@ impl ProbeServer {
         let http_addr_clone = http_addr.clone();
 
         tokio::spawn(async move {
-            let app = api::create_router(storage, broadcast, web_dir);
+            let app = api::create_router(storage, broadcast);
             let listener = tokio::net::TcpListener::bind(&http_addr_clone)
                 .await
                 .expect("无法绑定 HTTP 端口");
