@@ -29,6 +29,11 @@ curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | ba
 curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
 ```
 
+> 💡 **国内用户加速下载**：使用 GitHub 镜像代理
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | GITHUB_PROXY=https://mirror.ghproxy.com/ bash
+> ```
+
 **安装完成后**：
 - 🌐 Web UI: http://localhost:50052
 - 📊 HTTP API: http://localhost:50052/api/agents
