@@ -207,6 +207,8 @@ main() {
     if [ -z "${AUTO_CONFIRM:-}" ]; then
         echo -n "确认要卸载 ${components[*]}? [y/N] "
         read -r response
+        # 清理输入：去除首尾空格，只取第一个字符
+        response=$(echo "$response" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | cut -c1)
         if [[ ! "$response" =~ ^[Yy]$ ]]; then
             info "取消卸载"
             exit 0
