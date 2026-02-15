@@ -46,6 +46,23 @@ sudo systemctl restart iris-server
 sudo systemctl stop iris-server
 ```
 
+**卸载**：
+```bash
+# 自动检测并卸载已安装的组件（推荐）
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/uninstall.sh | bash
+
+# 或指定卸载 Server
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/uninstall.sh | bash -s server
+
+# 或指定卸载 Agent
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/uninstall.sh | bash -s agent
+```
+
+卸载脚本会自动：
+- 🔍 检测已安装的组件（server/agent）
+- ⏹ 停止并禁用 systemd 服务
+- 🗑️ 删除服务文件和二进制文件
+
 更多安装选项请查看 [安装文档](docs/INSTALL.md)
 
 ---
