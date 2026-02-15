@@ -326,6 +326,12 @@
         .metric-bar-fill.memory { background: var(--warning); }
         .metric-bar-fill.disk { background: var(--success); }
 
+        .metric-total {
+            font-size: 11px;
+            color: var(--text-tertiary);
+            margin-bottom: 6px;
+        }
+
         /* Modal */
         .modal-overlay {
             position: fixed;
@@ -663,7 +669,7 @@
             </div>
         );
 
-        const MetricCard = ({ label, value, percent, type }) => {
+        const MetricCard = ({ label, value, percent, type, total }) => {
             const numValue = parseFloat(value) || 0;
             const hasPercent = typeof value === 'string' && value.includes('%');
 
@@ -676,6 +682,9 @@
                             {hasPercent && '%'}
                         </span>
                     </div>
+                    {total && (
+                        <div className="metric-total">{total}</div>
+                    )}
                     <div className="metric-bar">
                         <div className={`metric-bar-fill ${type}`} style={{ width: `${percent}%` }} />
                     </div>
@@ -692,6 +701,12 @@
             const uptime = formatUptime(sys?.system_info?.uptime);
             const cpuCores = sys?.cpu?.core_count || 'N/A';
             const totalMemory = formatBytes(sys?.memory?.total);
+
+            // 计算具体的已用值
+            const cpuUsage = ((cpu / 100) * cpuCores).toFixed(2);
+            const memoryUsed = formatBytes(sys?.memory?.used);
+            const diskUsed = formatBytes(sys?.disks?.[0]?.used);
+            const diskTotal = formatBytes(sys?.disks?.[0]?.total);
 
             // 网络信息
             const network = sys?.network;
@@ -753,10 +768,34 @@
                     )}
 
                     <div className="metrics-grid">
-                        <MetricCard label="CPU" value={`${cpu}%`} percent={cpu} type="cpu" />
-                        <MetricCard label="内存" value={`${memory}%`} percent={memory} type="memory" />
-                        <MetricCard label="磁盘" value={`${disk}%`} percent={disk} type="disk" />
-                        <MetricCard label="负载" value={load} percent={Math.min(load * 25, 100)} type="cpu" />
+                        <MetricCard
+                            label="CPU"
+                            value={`${cpu}%`}
+                            percent={cpu}
+                            type="cpu"
+                            total={`${cpuUsage} / ${cpuCores} 核`}
+                        />
+                        <MetricCard
+                            label="内存"
+                            value={`${memory}%`}
+                            percent={memory}
+                            type="memory"
+                            total={`${memoryUsed} / ${totalMemory}`}
+                        />
+                        <MetricCard
+                            label="磁盘"
+                            value={`${disk}%`}
+                            percent={disk}
+                            type="disk"
+                            total={`${diskUsed} / ${diskTotal}`}
+                        />
+                        <MetricCard
+                            label="负载"
+                            value={load}
+                            percent={Math.min(load * 25, 100)}
+                            type="cpu"
+                            total={`${load} / ${cpuCores} 核`}
+                        />
                     </div>
                 </div>
             );
