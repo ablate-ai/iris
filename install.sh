@@ -10,12 +10,12 @@ NC='\033[0m' # No Color
 
 # 默认配置
 REPO="ablate-ai/iris"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-WEB_DIR="${WEB_DIR:-./web}"
+INSTALL_DIR="/usr/local/bin"
+WEB_DIR="/opt/iris/web"
 VERSION="${VERSION:-latest}"
-INSTALL_AGENT="${INSTALL_AGENT:-true}"
-INSTALL_SERVER="${INSTALL_SERVER:-true}"
-GITHUB_PROXY="${GITHUB_PROXY:-}"  # 可选的 GitHub 代理
+
+# k3s 风格：配置了 IRIS_SERVER 就是 agent，否则是 server
+IRIS_SERVER="${IRIS_SERVER:-}"
 
 # 打印带颜色的消息
 info() {
@@ -33,6 +33,60 @@ error() {
 
 warning() {
     echo -e "${YELLOW}!${NC} $1"
+}
+
+# 检测是否有 systemd
+has_systemd() {
+    command -v systemctl &> /dev/null && systemctl --version &> /dev/null
+}
+
+# 创建并启动 systemd 服务
+setup_systemd_service() {
+    local service_name=$1
+    local binary_name=$2
+    local exec_args=$3
+
+    if ! has_systemd; then
+        return 1
+    fi
+
+    info "检测到 systemd，创建服务: ${service_name}"
+
+    # 创建 systemd service 文件
+    warning "需要 sudo 权限创建 systemd 服务"
+    sudo tee "/etc/systemd/system/${service_name}.service" > /dev/null <<EOF
+[Unit]
+Description=Iris ${binary_name}
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${INSTALL_DIR}/${binary_name} ${exec_args}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # 重载并启动服务
+    info "重载 systemd 并启动 ${service_name}..."
+    sudo systemctl daemon-reload
+    sudo systemctl enable "${service_name}"
+    sudo systemctl restart "${service_name}"
+
+    # 等待启动
+    sleep 2
+
+    if systemctl is-active --quiet "${service_name}"; then
+        success "${service_name} 已启动"
+        return 0
+    else
+        error "${service_name} 启动失败，请查看日志: sudo journalctl -u ${service_name} -n 50"
+    fi
 }
 
 # 检测操作系统和架构
@@ -119,12 +173,10 @@ install_binary() {
         error "找不到二进制文件: ${binary_file}"
     fi
 
-    # 检查安装目录权限
-    if [ ! -w "$INSTALL_DIR" ]; then
+    # 尝试安装，权限不足则使用 sudo
+    if ! install -m 755 "$binary_file" "${INSTALL_DIR}/${binary_name}${ext}" 2>/dev/null; then
         warning "需要 sudo 权限安装到 ${INSTALL_DIR}"
         sudo install -m 755 "$binary_file" "${INSTALL_DIR}/${binary_name}${ext}"
-    else
-        install -m 755 "$binary_file" "${INSTALL_DIR}/${binary_name}${ext}"
     fi
 
     # 清理临时文件
@@ -166,12 +218,11 @@ install_web_ui() {
     fi
 
     # 创建 Web 目录并复制文件
-    if [ ! -w "$(dirname "$WEB_DIR")" ]; then
+    if ! mkdir -p "$WEB_DIR" 2>/dev/null; then
         warning "需要 sudo 权限安装到 ${WEB_DIR}"
         sudo mkdir -p "$WEB_DIR"
         sudo cp -r "$SRC_DIR"/* "$WEB_DIR/"
     else
-        mkdir -p "$WEB_DIR"
         cp -r "$SRC_DIR"/* "$WEB_DIR/"
     fi
 
@@ -185,29 +236,32 @@ install_web_ui() {
 # 显示使用说明
 show_usage() {
     cat << EOF
-Iris 一键安装脚本
+Iris 一键安装脚本 (k3s 风格)
 
 用法:
+  # 安装 server
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash
 
+  # 安装 agent
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
+
 环境变量:
+  IRIS_SERVER     server 地址（设置此值则安装 agent，否则安装 server）
   VERSION         指定版本号（默认: latest）
-  INSTALL_DIR     安装目录（默认: /usr/local/bin）
-  INSTALL_AGENT   是否安装 agent（默认: true）
-  INSTALL_SERVER  是否安装 server（默认: true）
+
+安装位置:
+  二进制文件:     /usr/local/bin
+  Web UI:         /opt/iris/web
 
 示例:
-  # 安装最新版本
+  # 安装最新版 server
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash
 
   # 安装指定版本
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | VERSION=v0.1.0 bash
 
-  # 只安装 agent
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | INSTALL_SERVER=false bash
-
-  # 安装到自定义目录
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | INSTALL_DIR=~/.local/bin bash
+  # 安装 agent
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
 
 EOF
 }
@@ -244,35 +298,56 @@ main() {
         mkdir -p "$INSTALL_DIR" || sudo mkdir -p "$INSTALL_DIR"
     fi
 
-    # 安装二进制文件
-    if [ "$INSTALL_AGENT" = "true" ]; then
+    # 判断安装模式
+    if [ -n "$IRIS_SERVER" ]; then
+        # agent 模式
+        info "检测到 IRIS_SERVER，安装 agent 模式"
         install_binary "iris-agent" "$platform" "$VERSION"
-    fi
 
-    if [ "$INSTALL_SERVER" = "true" ]; then
+        # 尝试使用 systemd 启动
+        if ! setup_systemd_service "iris-agent" "iris-agent" "--server ${IRIS_SERVER}"; then
+            # 没有 systemd 或启动失败，显示手动运行提示
+            echo ""
+            warning "未检测到 systemd，请手动启动 agent:"
+            echo -e "  ${GREEN}iris-agent --server ${IRIS_SERVER}${NC}"
+            echo ""
+        fi
+    else
+        # server 模式
+        info "未设置 IRIS_SERVER，安装 server 模式"
         install_binary "iris-server" "$platform" "$VERSION"
-        # 安装 Web UI（仅当安装 server 时）
+        # 安装 Web UI
         install_web_ui "$VERSION"
+
+        # 尝试使用 systemd 启动
+        if ! setup_systemd_service "iris-server" "iris-server" "--addr 0.0.0.0:50051 --web-dir ${WEB_DIR}"; then
+            # 没有 systemd 或启动失败，显示手动运行提示
+            echo ""
+            warning "未检测到 systemd，请手动启动 server:"
+            echo -e "  ${GREEN}iris-server --addr 0.0.0.0:50051 --web-dir ${WEB_DIR}${NC}"
+            echo ""
+            echo -e "在其他机器上安装 agent:"
+            echo -e "  ${YELLOW}curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://<server-ip>:50051 bash${NC}"
+            echo ""
+        fi
     fi
 
     echo ""
     success "安装完成！"
     echo ""
 
-    # 显示安装的二进制文件
-    if [ "$INSTALL_AGENT" = "true" ]; then
-        echo -e "  ${BLUE}iris-agent${NC} -> ${INSTALL_DIR}/iris-agent"
-        echo -e "    运行: ${GREEN}iris-agent --server http://your-server:50051${NC}"
-    fi
+    # 显示管理命令
+    if has_systemd; then
+        local service_name="iris-server"
+        [ -n "$IRIS_SERVER" ] && service_name="iris-agent"
 
-    if [ "$INSTALL_SERVER" = "true" ]; then
-        echo -e "  ${BLUE}iris-server${NC} -> ${INSTALL_DIR}/iris-server"
-        echo -e "    运行: ${GREEN}iris-server --addr 0.0.0.0:50051${NC}"
-        echo -e "  ${BLUE}Web UI${NC} -> ${WEB_DIR}"
-        echo -e "    自定义: ${YELLOW}编辑 ${WEB_DIR}/index.html${NC}"
+        echo -e "管理命令:"
+        echo -e "  查看状态: ${YELLOW}sudo systemctl status ${service_name}${NC}"
+        echo -e "  查看日志: ${YELLOW}sudo journalctl -u ${service_name} -f${NC}"
+        echo -e "  重启服务: ${YELLOW}sudo systemctl restart ${service_name}${NC}"
+        echo -e "  停止服务: ${YELLOW}sudo systemctl stop ${service_name}${NC}"
+        echo ""
     fi
-
-    echo ""
 
     # 检查 PATH
     if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
