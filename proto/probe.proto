@@ -4,8 +4,11 @@ package probe;
 
 // 探针服务定义
 service ProbeService {
-  // 上报指标数据
+  // 上报指标数据（一次性）
   rpc ReportMetrics(MetricsRequest) returns (MetricsResponse);
+
+  // 流式上报指标数据（推荐）
+  rpc StreamMetrics(stream MetricsRequest) returns (StreamResponse);
 
   // 心跳检测
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
@@ -33,6 +36,12 @@ message HeartbeatRequest {
 message HeartbeatResponse {
   bool alive = 1;
   int64 server_time = 2;
+}
+
+// 流式响应
+message StreamResponse {
+  bool success = 1;
+  string message = 2;
 }
 
 // 系统指标

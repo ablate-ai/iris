@@ -3,6 +3,8 @@ use common::proto::probe_service_client::ProbeServiceClient;
 use common::proto::MetricsRequest;
 use common::utils::{current_timestamp_ms, generate_agent_id};
 use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info};
 
 mod collector;
@@ -32,8 +34,29 @@ impl Agent {
     pub async fn run(&self) -> Result<()> {
         info!("Agent {} 启动，连接到 {}", self.agent_id, self.server_addr);
 
+        loop {
+            match self.run_stream().await {
+                Ok(_) => {
+                    info!("流式连接正常结束");
+                }
+                Err(e) => {
+                    error!("流式连接错误: {}，3秒后重连", e);
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                }
+            }
+        }
+    }
+
+    async fn run_stream(&self) -> Result<()> {
         let mut client = ProbeServiceClient::connect(self.server_addr.clone()).await?;
-        info!("成功连接到 Server");
+        info!("成功连接到 Server，建立流式通道");
+
+        let (tx, rx) = mpsc::channel(100);
+        let stream = ReceiverStream::new(rx);
+
+        // 发起流式请求
+        let response = client.stream_metrics(stream).await?;
+        info!("流式连接已建立: {}", response.into_inner().message);
 
         let mut interval = tokio::time::interval(self.interval);
 
@@ -43,27 +66,22 @@ impl Agent {
             // 采集系统指标
             let metrics = collector::collect_metrics();
 
-            // 上报指标
-            let request = tonic::Request::new(MetricsRequest {
+            // 通过流发送
+            let request = MetricsRequest {
                 agent_id: self.agent_id.clone(),
                 timestamp: current_timestamp_ms(),
                 system: Some(metrics),
                 hostname: self.hostname.clone(),
-            });
+            };
 
-            match client.report_metrics(request).await {
-                Ok(response) => {
-                    let resp = response.into_inner();
-                    if resp.success {
-                        info!("指标上报成功");
-                    } else {
-                        error!("指标上报失败: {}", resp.message);
-                    }
-                }
-                Err(e) => {
-                    error!("上报指标时出错: {}", e);
-                }
+            if tx.send(request).await.is_err() {
+                error!("发送指标失败，流已关闭");
+                break;
             }
+
+            info!("指标已发送");
         }
+
+        Ok(())
     }
 }

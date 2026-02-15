@@ -383,7 +383,7 @@
             <div class="stats-grid">
                 <div class="stat-card">
                     <h3>在线 Agent</h3>
-                    <div class="value">{{ agents.length }}</div>
+                    <div class="value">{{ agents.size }}</div>
                 </div>
                 <div class="stat-card">
                     <h3>平均 CPU 使用率</h3>
@@ -411,7 +411,7 @@
 
             <!-- Agent 列表 -->
             <div class="agents-grid">
-                <div v-for="agent in agents" :key="agent.agent_id"
+                <div v-for="agent in agentsList" :key="agent.agent_id"
                      class="agent-card"
                      @click="showAgentDetail(agent.agent_id)">
                     <div class="agent-header">
@@ -610,7 +610,7 @@
         createApp({
             data() {
                 return {
-                    agents: [],
+                    agents: new Map(),
                     loading: true,
                     error: null,
                     showModal: false,
@@ -618,30 +618,36 @@
                     selectedAgentId: null,
                     history: [],
                     apiBase: '',
-                    refreshInterval: null,
+                    eventSource: null,
                     cpuChart: null,
                     memoryChart: null
                 };
             },
             computed: {
                 avgCpu() {
-                    if (this.agents.length === 0) return 0;
-                    const sum = this.agents.reduce((acc, a) => acc + (a.metrics?.cpu || 0), 0);
-                    return (sum / this.agents.length).toFixed(1);
+                    const agents = Array.from(this.agents.values());
+                    if (agents.length === 0) return 0;
+                    const sum = agents.reduce((acc, a) => acc + (a.metrics?.cpu || 0), 0);
+                    return (sum / agents.length).toFixed(1);
                 },
                 avgMemory() {
-                    if (this.agents.length === 0) return 0;
-                    const sum = this.agents.reduce((acc, a) => acc + (a.metrics?.memory || 0), 0);
-                    return (sum / this.agents.length).toFixed(1);
+                    const agents = Array.from(this.agents.values());
+                    if (agents.length === 0) return 0;
+                    const sum = agents.reduce((acc, a) => acc + (a.metrics?.memory || 0), 0);
+                    return (sum / agents.length).toFixed(1);
                 },
                 lastUpdate() {
-                    if (this.agents.length === 0) return '--';
+                    if (this.agents.size === 0) return '--';
                     return new Date().toLocaleTimeString('zh-CN');
+                },
+                agentsList() {
+                    return Array.from(this.agents.values());
                 }
             },
             methods: {
-                async fetchAgents() {
+                async init() {
                     try {
+                        // 1. 首次加载：获取所有 Agent
                         const response = await fetch(`${this.apiBase}/api/agents`);
                         const data = await response.json();
 
@@ -652,24 +658,9 @@
                                 const metricsData = await metricsRes.json();
 
                                 if (metricsData.success) {
-                                    const sys = metricsData.data.system;
-                                    agent.metrics = {
-                                        cpu: sys?.cpu?.usage_percent?.toFixed(1) || 0,
-                                        memory: sys?.memory?.usage_percent?.toFixed(1) || 0,
-                                        disk: sys?.disks?.[0]?.usage_percent?.toFixed(1),
-                                        load: sys?.cpu?.load_avg_1?.toFixed(2)
-                                    };
-                                    agent.system_info = sys?.system_info;
-                                    agent.extra_info = {
-                                        uptime: this.formatUptimeShort(sys?.system_info?.uptime),
-                                        cpu_cores: sys?.cpu?.core_count,
-                                        network_sent: this.formatBytesShort(sys?.network?.bytes_sent),
-                                        network_recv: this.formatBytesShort(sys?.network?.bytes_recv)
-                                    };
+                                    this.updateAgent(metricsData.data);
                                 }
                             }
-
-                            this.agents = data.data;
                             this.error = null;
                         }
                     } catch (err) {
@@ -678,6 +669,64 @@
                     } finally {
                         this.loading = false;
                     }
+
+                    // 2. 建立 SSE 连接，接收实时更新
+                    this.connectSSE();
+                },
+
+                connectSSE() {
+                    this.eventSource = new EventSource(`${this.apiBase}/api/stream`);
+
+                    this.eventSource.onmessage = (event) => {
+                        try {
+                            const metrics = JSON.parse(event.data);
+                            this.updateAgent(metrics);
+                        } catch (err) {
+                            console.error('解析 SSE 数据失败:', err);
+                        }
+                    };
+
+                    this.eventSource.onerror = (error) => {
+                        console.error('SSE 连接错误:', error);
+                        this.eventSource.close();
+                        // 3 秒后重连
+                        setTimeout(() => {
+                            console.log('尝试重新连接 SSE...');
+                            this.connectSSE();
+                        }, 3000);
+                    };
+
+                    this.eventSource.onopen = () => {
+                        console.log('SSE 连接已建立');
+                    };
+                },
+
+                updateAgent(metrics) {
+                    const sys = metrics.system;
+                    const agentData = {
+                        agent_id: metrics.agent_id,
+                        hostname: metrics.hostname,
+                        last_seen: metrics.timestamp,
+                        metrics: {
+                            cpu: sys?.cpu?.usage_percent?.toFixed(1) || 0,
+                            memory: sys?.memory?.usage_percent?.toFixed(1) || 0,
+                            disk: sys?.disks?.[0]?.usage_percent?.toFixed(1),
+                            load: sys?.cpu?.load_avg_1?.toFixed(2)
+                        },
+                        system_info: sys?.system_info,
+                        extra_info: {
+                            uptime: this.formatUptimeShort(sys?.system_info?.uptime),
+                            cpu_cores: sys?.cpu?.core_count,
+                            network_sent: this.formatBytesShort(sys?.network?.bytes_sent),
+                            network_recv: this.formatBytesShort(sys?.network?.bytes_recv)
+                        }
+                    };
+
+                    this.agents.set(metrics.agent_id, agentData);
+                },
+
+                async fetchAgents() {
+                    // 保留此方法以兼容，但不再使用轮询
                 },
                 async showAgentDetail(agentId) {
                     this.selectedAgentId = agentId;
@@ -837,15 +886,11 @@
                 }
             },
             mounted() {
-                this.fetchAgents();
-                // 每 5 秒刷新一次
-                this.refreshInterval = setInterval(() => {
-                    this.fetchAgents();
-                }, 5000);
+                this.init();
             },
             beforeUnmount() {
-                if (this.refreshInterval) {
-                    clearInterval(this.refreshInterval);
+                if (this.eventSource) {
+                    this.eventSource.close();
                 }
                 if (this.cpuChart) {
                     this.cpuChart.dispose();

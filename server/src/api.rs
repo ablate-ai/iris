@@ -2,13 +2,17 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{header, StatusCode, Uri},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Response, sse::{Event, Sse}},
     routing::get,
     Json, Router,
 };
+use futures::stream::{self, Stream};
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
@@ -22,6 +26,7 @@ struct WebAssets;
 #[derive(Clone)]
 pub struct ApiState {
     pub storage: Storage,
+    pub broadcast: broadcast::Sender<MetricsRequest>,
 }
 
 /// Agent 信息响应
@@ -70,8 +75,8 @@ impl<T: Serialize> ApiResponse<T> {
 }
 
 /// 创建 HTTP API 路由
-pub fn create_router(storage: Storage) -> Router {
-    let state = ApiState { storage };
+pub fn create_router(storage: Storage, broadcast: broadcast::Sender<MetricsRequest>) -> Router {
+    let state = ApiState { storage, broadcast };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -82,6 +87,7 @@ pub fn create_router(storage: Storage) -> Router {
 
     Router::new()
         .route("/api", get(root))
+        .route("/api/stream", get(sse_handler))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/:id/metrics", get(get_agent_metrics))
         .route("/api/agents/:id/metrics/history", get(get_agent_history))
@@ -134,11 +140,39 @@ async fn root() -> impl IntoResponse {
         "name": "Iris API",
         "version": "0.1.0",
         "endpoints": [
+            "GET /api/stream (SSE)",
             "GET /api/agents",
             "GET /api/agents/:id/metrics",
             "GET /api/agents/:id/metrics/history?limit=100"
         ]
     }))
+}
+
+/// SSE 流式推送
+async fn sse_handler(
+    State(state): State<Arc<ApiState>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.broadcast.subscribe();
+
+    let stream = stream::unfold(rx, |mut rx| async move {
+        match rx.recv().await {
+            Ok(metrics) => {
+                // 将 Protobuf 转为 JSON
+                if let Ok(json) = serde_json::to_string(&metrics) {
+                    Some((Ok(Event::default().data(json)), rx))
+                } else {
+                    Some((Ok(Event::default().comment("序列化失败")), rx))
+                }
+            }
+            Err(_) => None,
+        }
+    });
+
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive")
+    )
 }
 
 /// 获取所有 Agent 列表
