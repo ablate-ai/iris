@@ -1,27 +1,22 @@
 use axum::{
-    body::Body,
     extract::{Path, Query, State},
-    http::{header, StatusCode, Uri},
-    response::{IntoResponse, Response, sse::{Event, Sse}},
+    http::StatusCode,
+    response::{IntoResponse, sse::{Event, Sse}},
     routing::get,
     Json, Router,
 };
 use futures::stream::{self, Stream};
-use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 use tracing::info;
 
 use crate::storage::Storage;
 use common::proto::MetricsRequest;
-
-#[derive(RustEmbed)]
-#[folder = "../web"]
-struct WebAssets;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -76,7 +71,7 @@ impl<T: Serialize> ApiResponse<T> {
 }
 
 /// 创建 HTTP API 路由
-pub fn create_router(storage: Storage, broadcast: broadcast::Sender<MetricsRequest>) -> Router {
+pub fn create_router(storage: Storage, broadcast: broadcast::Sender<MetricsRequest>, web_dir: String) -> Router {
     let state = ApiState { storage, broadcast };
 
     let cors = CorsLayer::new()
@@ -84,7 +79,7 @@ pub fn create_router(storage: Storage, broadcast: broadcast::Sender<MetricsReque
         .allow_methods(Any)
         .allow_headers(Any);
 
-    info!("Web UI 已嵌入二进制，启用静态文件服务");
+    info!("Web UI 目录: {}", web_dir);
 
     Router::new()
         .route("/api", get(root))
@@ -92,47 +87,9 @@ pub fn create_router(storage: Storage, broadcast: broadcast::Sender<MetricsReque
         .route("/api/agents", get(list_agents))
         .route("/api/agents/:id/metrics", get(get_agent_metrics))
         .route("/api/agents/:id/metrics/history", get(get_agent_history))
-        .fallback(serve_embedded_file)
+        .nest_service("/", ServeDir::new(web_dir))
         .layer(cors)
         .with_state(Arc::new(state))
-}
-
-/// 服务嵌入的静态文件
-async fn serve_embedded_file(uri: Uri) -> Response {
-    let path = uri.path().trim_start_matches('/');
-
-    // 如果路径为空或是目录，返回 index.html
-    let path = if path.is_empty() || path.ends_with('/') {
-        "index.html"
-    } else {
-        path
-    };
-
-    match WebAssets::get(path) {
-        Some(content) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, mime.as_ref())
-                .body(Body::from(content.data))
-                .unwrap()
-        }
-        None => {
-            // 对于 SPA，未找到的路径返回 index.html
-            if let Some(index) = WebAssets::get("index.html") {
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "text/html")
-                    .body(Body::from(index.data))
-                    .unwrap()
-            } else {
-                Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(Body::from("404 Not Found"))
-                    .unwrap()
-            }
-        }
-    }
 }
 
 /// 根路径
