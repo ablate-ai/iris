@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 REPO="ablate-ai/iris"
 INSTALL_DIR="/usr/local/bin"
 
-# k3s 风格：配置了 IRIS_SERVER 就是 agent，否则是 server
+# 配置了 IRIS_SERVER 就是 agent，否则是 server
 IRIS_SERVER="${IRIS_SERVER:-}"
 
 # 打印带颜色的消息
@@ -146,7 +146,7 @@ detect_platform() {
 # 显示使用说明
 show_usage() {
     cat << EOF
-Iris 一键安装脚本 (k3s 风格)
+Iris 一键安装脚本
 
 用法:
   # 安装 server
@@ -231,7 +231,7 @@ install_binary() {
 # 显示使用说明
 show_usage() {
     cat << EOF
-Iris 一键安装脚本 (k3s 风格)
+Iris 一键安装脚本
 
 用法:
   # 安装 server
