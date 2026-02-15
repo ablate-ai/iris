@@ -19,8 +19,10 @@ static AGENT_START_TIME: once_cell::sync::Lazy<Instant> =
 static SYSTEM: once_cell::sync::Lazy<Mutex<System>> =
     once_cell::sync::Lazy::new(|| {
         let mut sys = System::new_all();
-        // 第一次刷新 CPU，为后续采集做准备
+        // 第一次刷新，为后续采集做准备
         sys.refresh_cpu_usage();
+        sys.refresh_memory();
+        sys.refresh_processes(ProcessesToUpdate::All, true);
         Mutex::new(sys)
     });
 
