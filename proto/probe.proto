@@ -42,6 +42,7 @@ message SystemMetrics {
   repeated DiskMetrics disks = 3;
   NetworkMetrics network = 4;
   repeated ProcessMetrics processes = 5;
+  SystemInfo system_info = 6;       // 系统信息
 }
 
 // CPU 指标
@@ -93,4 +94,13 @@ message ProcessMetrics {
   double cpu_usage = 3;         // CPU 使用率
   uint64 memory = 4;            // 内存使用（字节）
   string status = 5;            // 状态
+}
+
+// 系统信息
+message SystemInfo {
+  string os_name = 1;           // 操作系统名称
+  string os_version = 2;        // 操作系统版本
+  string kernel_version = 3;    // 内核版本
+  string arch = 4;              // 系统架构
+  uint64 uptime = 5;            // 运行时间（秒）
 }

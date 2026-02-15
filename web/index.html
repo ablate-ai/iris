@@ -394,6 +394,7 @@
                     </div>
                     <div class="agent-info">
                         <div>Agent ID: {{ agent.agent_id }}</div>
+                        <div v-if="agent.system_info">{{ agent.system_info.os_name }} {{ agent.system_info.arch }}</div>
                         <div>最后上报: {{ formatTime(agent.last_seen) }}</div>
                     </div>
                     <div class="metrics" v-if="agent.metrics">
@@ -442,6 +443,22 @@
                     <div class="detail-section" v-if="selectedAgent.system">
                         <h3>系统信息</h3>
                         <div class="info-grid">
+                            <div class="info-item" v-if="selectedAgent.system.system_info">
+                                <label>操作系统</label>
+                                <value>{{ selectedAgent.system.system_info.os_name }}</value>
+                            </div>
+                            <div class="info-item" v-if="selectedAgent.system.system_info">
+                                <label>系统版本</label>
+                                <value>{{ selectedAgent.system.system_info.os_version }}</value>
+                            </div>
+                            <div class="info-item" v-if="selectedAgent.system.system_info">
+                                <label>架构</label>
+                                <value>{{ selectedAgent.system.system_info.arch }}</value>
+                            </div>
+                            <div class="info-item" v-if="selectedAgent.system.system_info">
+                                <label>运行时间</label>
+                                <value>{{ formatUptime(selectedAgent.system.system_info.uptime) }}</value>
+                            </div>
                             <div class="info-item">
                                 <label>CPU 核心数</label>
                                 <value>{{ selectedAgent.system.cpu?.core_count || 'N/A' }}</value>
@@ -457,6 +474,29 @@
                             <div class="info-item">
                                 <label>可用内存</label>
                                 <value>{{ formatBytes(selectedAgent.system.memory?.available) }}</value>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 网络流量 -->
+                    <div class="detail-section" v-if="selectedAgent.system?.network">
+                        <h3>网络流量</h3>
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <label>总上传</label>
+                                <value>{{ formatBytes(selectedAgent.system.network.bytes_sent) }}</value>
+                            </div>
+                            <div class="info-item">
+                                <label>总下载</label>
+                                <value>{{ formatBytes(selectedAgent.system.network.bytes_recv) }}</value>
+                            </div>
+                            <div class="info-item">
+                                <label>发送包数</label>
+                                <value>{{ formatNumber(selectedAgent.system.network.packets_sent) }}</value>
+                            </div>
+                            <div class="info-item">
+                                <label>接收包数</label>
+                                <value>{{ formatNumber(selectedAgent.system.network.packets_recv) }}</value>
                             </div>
                         </div>
                     </div>
@@ -560,6 +600,7 @@
                                         cpu: metricsData.data.system?.cpu?.usage_percent?.toFixed(1) || 0,
                                         memory: metricsData.data.system?.memory?.usage_percent?.toFixed(1) || 0
                                     };
+                                    agent.system_info = metricsData.data.system?.system_info;
                                 }
                             }
 
@@ -684,6 +725,24 @@
                     }
 
                     return `${size.toFixed(2)} ${units[unitIndex]}`;
+                },
+                formatUptime(seconds) {
+                    if (!seconds) return 'N/A';
+                    const days = Math.floor(seconds / 86400);
+                    const hours = Math.floor((seconds % 86400) / 3600);
+                    const minutes = Math.floor((seconds % 3600) / 60);
+
+                    if (days > 0) {
+                        return `${days} 天 ${hours} 小时`;
+                    } else if (hours > 0) {
+                        return `${hours} 小时 ${minutes} 分钟`;
+                    } else {
+                        return `${minutes} 分钟`;
+                    }
+                },
+                formatNumber(num) {
+                    if (!num) return '0';
+                    return num.toLocaleString('zh-CN');
                 }
             },
             mounted() {

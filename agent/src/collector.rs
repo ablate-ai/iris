@@ -1,5 +1,6 @@
 use common::proto::{
     CpuMetrics, DiskMetrics, MemoryMetrics, NetworkMetrics, ProcessMetrics, SystemMetrics,
+    SystemInfo,
 };
 use sysinfo::{System, Networks, Disks};
 
@@ -14,6 +15,7 @@ pub fn collect_metrics() -> SystemMetrics {
         disks: collect_disk_metrics(),
         network: Some(collect_network_metrics()),
         processes: collect_process_metrics(&sys),
+        system_info: Some(collect_system_info(&sys)),
     }
 }
 
@@ -120,4 +122,14 @@ fn collect_process_metrics(sys: &System) -> Vec<ProcessMetrics> {
             status: format!("{:?}", process.status()),
         })
         .collect()
+}
+
+fn collect_system_info(_sys: &System) -> SystemInfo {
+    SystemInfo {
+        os_name: System::name().unwrap_or_else(|| "Unknown".to_string()),
+        os_version: System::os_version().unwrap_or_else(|| "Unknown".to_string()),
+        kernel_version: System::kernel_version().unwrap_or_else(|| "Unknown".to_string()),
+        arch: System::cpu_arch().unwrap_or_else(|| "Unknown".to_string()),
+        uptime: System::uptime(),
+    }
 }
