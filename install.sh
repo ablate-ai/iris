@@ -11,7 +11,6 @@ NC='\033[0m' # No Color
 # 默认配置
 REPO="ablate-ai/iris"
 INSTALL_DIR="/usr/local/bin"
-VERSION="${VERSION:-latest}"
 
 # k3s 风格：配置了 IRIS_SERVER 就是 agent，否则是 server
 IRIS_SERVER="${IRIS_SERVER:-}"
@@ -110,49 +109,47 @@ detect_platform() {
     echo "${os}-${arch}"
 }
 
-# 获取最新版本号
-get_latest_version() {
-    info "获取最新版本..." >&2
-    local version
-    local api_url="${GITHUB_PROXY}https://api.github.com/repos/${REPO}/releases/latest"
+# 显示使用说明
+show_usage() {
+    cat << EOF
+Iris 一键安装脚本 (k3s 风格)
 
-    # 使用 jq 解析 JSON（如果可用），否则使用 grep
-    if command -v jq &> /dev/null; then
-        version=$(curl -fsSL -H "User-Agent: iris-installer" "$api_url" 2>/dev/null | jq -r '.tag_name // empty')
-    else
-        # 备用方法：使用 grep + sed 提取 tag_name
-        version=$(curl -fsSL -H "User-Agent: iris-installer" "$api_url" 2>/dev/null | grep -o '"tag_name":\s*"[^"]*"' | sed -E 's/.*"([^"]+)"/\1/')
-    fi
+用法:
+  # 安装 server
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash
 
-    # 验证版本号格式（必须以 v 开头）
-    if [[ -n "$version" && ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        warning "获取到的版本号格式异常: $version"
-        version=""
-    fi
+  # 安装 agent
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
 
-    if [ -z "$version" ]; then
-        warning "无法从 GitHub API 获取版本号，尝试备用方法..."
-        # 备用方法：从 GitHub releases 页面获取
-        local releases_url="${GITHUB_PROXY}https://github.com/${REPO}/releases/latest"
-        version=$(curl -fsSL -H "User-Agent: iris-installer" "$releases_url" 2>/dev/null | grep -oE 'tag/v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
-    fi
+环境变量:
+  IRIS_SERVER     server 地址（设置此值则安装 agent，否则安装 server）
+  GITHUB_PROXY    GitHub 代理（用于加速下载，如：https://mirror.ghproxy.com/）
 
-    if [ -z "$version" ]; then
-        error "无法获取最新版本号，请手动指定版本: VERSION=v0.0.1 bash install.sh"
-    fi
+说明:
+  Web UI 已嵌入二进制文件，无需额外安装
+  自动从 GitHub Releases 下载最新版本
 
-    echo "$version"
+示例:
+  # 安装最新版 server
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash
+
+  # 使用代理加速下载
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | GITHUB_PROXY=https://mirror.ghproxy.com/ bash
+
+  # 安装 agent
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
+
+EOF
 }
 
 # 下载并安装
 install_binary() {
     local binary_name=$1
     local platform=$2
-    local version=$3
 
     info "安装 ${binary_name}..."
 
-    # 构建下载 URL
+    # 构建下载 URL（使用 latest 自动重定向到最新版本）
     local ext=""
     if [[ "$platform" == "windows-"* ]]; then
         ext=".exe"
@@ -161,12 +158,12 @@ install_binary() {
         local archive_name="iris-${platform}.tar.gz"
     fi
 
-    local download_url="${GITHUB_PROXY}https://github.com/${REPO}/releases/download/${version}/${archive_name}"
+    local download_url="${GITHUB_PROXY}https://github.com/${REPO}/releases/latest/download/${archive_name}"
     local tmp_dir=$(mktemp -d)
 
     info "下载 ${archive_name}..."
     if ! curl -fsSL -H "User-Agent: iris-installer" "$download_url" -o "${tmp_dir}/${archive_name}"; then
-        error "下载失败: ${download_url}"
+        error "下载失败，请检查网络连接或 GitHub Releases 是否存在文件: ${download_url}"
     fi
 
     # 解压
@@ -248,12 +245,7 @@ main() {
     local platform
     platform=$(detect_platform)
     info "检测到平台: ${platform}"
-
-    # 获取版本
-    if [ "$VERSION" = "latest" ]; then
-        VERSION=$(get_latest_version)
-    fi
-    info "安装版本: ${VERSION}"
+    info "从 GitHub Releases 下载最新版本"
 
     # 创建安装目录
     if [ ! -d "$INSTALL_DIR" ]; then
@@ -265,7 +257,7 @@ main() {
     if [ -n "$IRIS_SERVER" ]; then
         # agent 模式
         info "检测到 IRIS_SERVER，安装 agent 模式"
-        install_binary "iris-agent" "$platform" "$VERSION"
+        install_binary "iris-agent" "$platform"
 
         # 尝试使用 systemd 启动
         if ! setup_systemd_service "iris-agent" "iris-agent" "--server ${IRIS_SERVER}"; then
@@ -278,7 +270,7 @@ main() {
     else
         # server 模式
         info "未设置 IRIS_SERVER，安装 server 模式"
-        install_binary "iris-server" "$platform" "$VERSION"
+        install_binary "iris-server" "$platform"
 
         # 尝试使用 systemd 启动
         if ! setup_systemd_service "iris-server" "iris-server" "--addr 0.0.0.0:50051"; then
