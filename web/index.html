@@ -527,6 +527,43 @@
     <script type="text/babel">
         const { useState, useEffect, useRef, useCallback } = React;
 
+        // 数字动画 Hook
+        const useCountUp = (end, duration = 1000, decimals = 1) => {
+            const [count, setCount] = useState(end);
+            const requestRef = useRef(null);
+
+            useEffect(() => {
+                const startTime = performance.now();
+                const startValue = count;
+                const endValue = parseFloat(end) || 0;
+
+                const animate = (currentTime) => {
+                    const elapsed = currentTime - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+
+                    // 使用 easeOutQuart 缓动函数
+                    const easeProgress = 1 - Math.pow(1 - progress, 4);
+
+                    const current = startValue + (endValue - startValue) * easeProgress;
+                    setCount(parseFloat(current.toFixed(decimals)));
+
+                    if (progress < 1) {
+                        requestRef.current = requestAnimationFrame(animate);
+                    }
+                };
+
+                requestRef.current = requestAnimationFrame(animate);
+
+                return () => {
+                    if (requestRef.current) {
+                        cancelAnimationFrame(requestRef.current);
+                    }
+                };
+            }, [end, duration, decimals]);
+
+            return count;
+        };
+
         // Utility functions
         const formatBytes = (bytes) => {
             if (!bytes) return 'N/A';
@@ -585,27 +622,66 @@
         };
 
         // Components
+        const AnimatedNumber = ({ value, duration = 1000, decimals = 1, startFromZero = false }) => {
+            const [initialized, setInitialized] = useState(!startFromZero);
+            const displayValue = initialized ? value : 0;
+
+            useEffect(() => {
+                if (startFromZero && !initialized) {
+                    setInitialized(true);
+                }
+            }, [startFromZero, initialized]);
+
+            const count = useCountUp(displayValue, duration, decimals);
+            return <>{count}</>;
+        };
+
+        // 用于显示带单位的动画数字
+        const AnimatedValue = ({ value, duration = 600 }) => {
+            // 提取数字部分和单位部分
+            const match = value.toString().match(/^([\d.]+)\s*(.*)$/);
+            if (!match) return <>{value}</>;
+
+            const numValue = parseFloat(match[1]);
+            const unit = match[2];
+
+            return (
+                <>
+                    <AnimatedNumber value={numValue} duration={duration} decimals={1} />
+                    {unit && <>{unit}</>}
+                </>
+            );
+        };
+
         const StatCard = ({ label, value, unit }) => (
             <div className="stat-card">
                 <div className="stat-label">{label}</div>
                 <div className="stat-value">
-                    {value}
+                    <AnimatedNumber value={parseFloat(value) || 0} duration={800} decimals={0} startFromZero={true} />
                     {unit && <span className="stat-unit">{unit}</span>}
                 </div>
             </div>
         );
 
-        const MetricCard = ({ label, value, percent, type }) => (
-            <div className="metric">
-                <div className="metric-header">
-                    <span className="metric-label">{label}</span>
-                    <span className="metric-value">{value}</span>
+        const MetricCard = ({ label, value, percent, type }) => {
+            const numValue = parseFloat(value) || 0;
+            const hasPercent = typeof value === 'string' && value.includes('%');
+
+            return (
+                <div className="metric">
+                    <div className="metric-header">
+                        <span className="metric-label">{label}</span>
+                        <span className="metric-value">
+                            <AnimatedNumber value={numValue} duration={600} decimals={1} />
+                            {hasPercent && '%'}
+                        </span>
+                    </div>
+                    <div className="metric-bar">
+                        <div className={`metric-bar-fill ${type}`} style={{ width: `${percent}%` }} />
+                    </div>
                 </div>
-                <div className="metric-bar">
-                    <div className={`metric-bar-fill ${type}`} style={{ width: `${percent}%` }} />
-                </div>
-            </div>
-        );
+            );
+        };
 
         const AgentCard = ({ agent, onClick }) => {
             const sys = agent.system;
@@ -662,7 +738,7 @@
                                     <span className="network-stat-icon">⬆️</span>
                                     <span className="network-stat-label">上传</span>
                                 </div>
-                                <div className="network-stat-value">{uploadSpeed}</div>
+                                <div className="network-stat-value"><AnimatedValue value={uploadSpeed} /></div>
                                 <div className="network-stat-total">总计 {totalSent}</div>
                             </div>
                             <div className="network-stat">
@@ -670,7 +746,7 @@
                                     <span className="network-stat-icon">⬇️</span>
                                     <span className="network-stat-label">下载</span>
                                 </div>
-                                <div className="network-stat-value">{downloadSpeed}</div>
+                                <div className="network-stat-value"><AnimatedValue value={downloadSpeed} /></div>
                                 <div className="network-stat-total">总计 {totalRecv}</div>
                             </div>
                         </div>
