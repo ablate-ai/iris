@@ -1,4 +1,4 @@
-.PHONY: help build build-agent build-server build-all test clean fmt clippy run-server run-agent release release-major release-minor release-patch
+.PHONY: help build build-agent build-server build-all test clean fmt clippy run-server run-agent dev release release-major release-minor release-patch
 
 # 默认目标
 help:
@@ -15,6 +15,7 @@ help:
 	@echo "  make clean          - 清理构建产物"
 	@echo "  make run-server     - 运行 server（开发模式）"
 	@echo "  make run-agent      - 运行 agent（开发模式）"
+	@echo "  make dev            - 一键启动 server 和 agent（开发模式）"
 	@echo "  make release        - 创建并推送 release tag（需指定 VERSION）"
 	@echo "  make release-major  - 自动递增主版本号 (x.0.0)"
 	@echo "  make release-minor  - 自动递增次版本号 (x.y.0)"
@@ -61,6 +62,18 @@ run-server:
 # 运行 agent（开发模式）
 run-agent:
 	cargo run --bin iris-agent -- --server http://127.0.0.1:50051 --interval 10
+
+# 一键启动开发环境（同时运行 server 和 agent）
+dev:
+	@echo "🚀 启动开发环境..."
+	@echo "📍 Web UI: http://localhost:50052"
+	@echo "📍 gRPC: localhost:50051"
+	@echo "📍 按 Ctrl+C 停止所有服务"
+	@echo ""
+	@trap 'kill 0' EXIT; \
+	cargo run --bin iris-server -- --addr 0.0.0.0:50051 & \
+	sleep 3; \
+	cargo run --bin iris-agent -- --server http://127.0.0.1:50051 --interval 5
 
 # 创建 release
 release:

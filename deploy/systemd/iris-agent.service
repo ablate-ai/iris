@@ -1,0 +1,25 @@
+[Unit]
+Description=Iris Agent - 服务器监控探针
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/iris
+ExecStart=/opt/iris/iris-agent --server http://your-server:50051 --interval 10
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+
+# 资源限制
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

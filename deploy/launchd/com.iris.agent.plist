@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.iris.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/iris-agent</string>
+        <string>--server</string>
+        <string>http://your-server:50051</string>
+        <string>--interval</string>
+        <string>10</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/usr/local/var/iris</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/iris-agent.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/iris-agent.error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RUST_LOG</key>
+        <string>iris=info</string>
+    </dict>
+</dict>
+</plist>
