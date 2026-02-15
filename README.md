@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | IR
 
 💡 **国内用户加速下载**：使用 GitHub 镜像代理
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | GITHUB_PROXY=https://mirror.ghproxy.com bash
+curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/install.sh | GITHUB_PROXY=https://ghfast.top/ bash
 ```
 
 **安装完成后**：
