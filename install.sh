@@ -14,6 +14,7 @@ INSTALL_DIR="/usr/local/bin"
 
 # 配置了 IRIS_SERVER 就是 agent，否则是 server
 IRIS_SERVER="${IRIS_SERVER:-}"
+IRIS_HOSTNAME="${IRIS_HOSTNAME:-}"
 
 # 打印带颜色的消息
 info() {
@@ -67,6 +68,7 @@ setup_systemd_service() {
     local service_name=$1
     local binary_name=$2
     local exec_args=$3
+    local env_vars=$4
 
     if ! has_systemd; then
         return 1
@@ -95,7 +97,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=${INSTALL_DIR}/${binary_name} ${exec_args}
-Restart=always
+${env_vars}Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
@@ -155,8 +157,12 @@ Iris 一键安装脚本
   # 安装 agent
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
 
+  # 安装 agent 并自定义显示名称
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 IRIS_HOSTNAME=my-server bash
+
 环境变量:
   IRIS_SERVER     server 地址（设置此值则安装 agent，否则安装 server）
+  IRIS_HOSTNAME   自定义显示名称（可选，默认使用系统 hostname）
   GITHUB_PROXY    GitHub 代理（用于加速下载，如：https://mirror.ghproxy.com/）
 
 说明:
@@ -240,8 +246,12 @@ Iris 一键安装脚本
   # 安装 agent
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
 
+  # 安装 agent 并自定义显示名称
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 IRIS_HOSTNAME=my-server bash
+
 环境变量:
   IRIS_SERVER     server 地址（设置此值则安装 agent，否则安装 server）
+  IRIS_HOSTNAME   自定义显示名称（可选，默认使用系统 hostname）
   VERSION         指定版本号（默认: latest）
 
 说明:
@@ -293,12 +303,23 @@ main() {
         info "检测到 IRIS_SERVER，安装 agent 模式"
         install_binary "iris-agent" "$platform"
 
+        # 准备环境变量
+        local env_vars=""
+        if [ -n "$IRIS_HOSTNAME" ]; then
+            info "使用自定义 hostname: ${IRIS_HOSTNAME}"
+            env_vars="Environment=\"IRIS_HOSTNAME=${IRIS_HOSTNAME}\"\n"
+        fi
+
         # 尝试使用 systemd 启动
-        if ! setup_systemd_service "iris-agent" "iris-agent" "--server ${IRIS_SERVER}"; then
+        if ! setup_systemd_service "iris-agent" "iris-agent" "--server ${IRIS_SERVER}" "$env_vars"; then
             # 没有 systemd 或没有权限，显示手动运行提示
             echo ""
             warning "无法创建 systemd 服务，请手动启动 agent:"
-            echo -e "  ${GREEN}iris-agent --server ${IRIS_SERVER}${NC}"
+            if [ -n "$IRIS_HOSTNAME" ]; then
+                echo -e "  ${GREEN}IRIS_HOSTNAME=${IRIS_HOSTNAME} iris-agent --server ${IRIS_SERVER}${NC}"
+            else
+                echo -e "  ${GREEN}iris-agent --server ${IRIS_SERVER}${NC}"
+            fi
             echo ""
         fi
     else
@@ -307,7 +328,7 @@ main() {
         install_binary "iris-server" "$platform"
 
         # 尝试使用 systemd 启动
-        if ! setup_systemd_service "iris-server" "iris-server" "--addr 0.0.0.0:50051"; then
+        if ! setup_systemd_service "iris-server" "iris-server" "--addr 0.0.0.0:50051" ""; then
             # 没有 systemd 或没有权限，显示手动运行提示
             echo ""
             warning "无法创建 systemd 服务，请手动启动 server:"

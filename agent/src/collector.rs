@@ -214,8 +214,11 @@ fn collect_system_info(sys: &System) -> SystemInfo {
         }
     };
 
-    // 获取主机名
-    let hostname = System::host_name().unwrap_or_else(|| "Unknown".to_string());
+    // 获取主机名（优先使用环境变量 IRIS_HOSTNAME）
+    let hostname = std::env::var("IRIS_HOSTNAME")
+        .ok()
+        .or_else(|| System::host_name())
+        .unwrap_or_else(|| "Unknown".to_string());
 
     SystemInfo {
         os_name: System::name().unwrap_or_else(|| "Unknown".to_string()),
