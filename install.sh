@@ -14,6 +14,7 @@ INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 VERSION="${VERSION:-latest}"
 INSTALL_AGENT="${INSTALL_AGENT:-true}"
 INSTALL_SERVER="${INSTALL_SERVER:-true}"
+GITHUB_PROXY="${GITHUB_PROXY:-}"  # 可选的 GitHub 代理
 
 # 打印带颜色的消息
 info() {
@@ -59,10 +60,19 @@ detect_platform() {
 get_latest_version() {
     info "获取最新版本..." >&2
     local version
-    version=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    local api_url="${GITHUB_PROXY}https://api.github.com/repos/${REPO}/releases/latest"
+
+    version=$(curl -fsSL -H "User-Agent: iris-installer" "$api_url" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
     if [ -z "$version" ]; then
-        error "无法获取最新版本号"
+        warning "无法从 GitHub API 获取版本号，尝试备用方法..."
+        # 备用方法：从 GitHub releases 页面获取
+        local releases_url="${GITHUB_PROXY}https://github.com/${REPO}/releases/latest"
+        version=$(curl -fsSL -H "User-Agent: iris-installer" "$releases_url" 2>/dev/null | grep -oP 'tag/\K[^"]+' | head -1)
+    fi
+
+    if [ -z "$version" ]; then
+        error "无法获取最新版本号，请手动指定版本: VERSION=v0.1.0 bash install.sh"
     fi
 
     echo "$version"
@@ -85,11 +95,11 @@ install_binary() {
         local archive_name="iris-${platform}.tar.gz"
     fi
 
-    local download_url="https://github.com/${REPO}/releases/download/${version}/${archive_name}"
+    local download_url="${GITHUB_PROXY}https://github.com/${REPO}/releases/download/${version}/${archive_name}"
     local tmp_dir=$(mktemp -d)
 
     info "下载 ${archive_name}..."
-    if ! curl -fsSL "$download_url" -o "${tmp_dir}/${archive_name}"; then
+    if ! curl -fsSL -H "User-Agent: iris-installer" "$download_url" -o "${tmp_dir}/${archive_name}"; then
         error "下载失败: ${download_url}"
     fi
 
