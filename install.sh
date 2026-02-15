@@ -116,17 +116,29 @@ get_latest_version() {
     local version
     local api_url="${GITHUB_PROXY}https://api.github.com/repos/${REPO}/releases/latest"
 
-    version=$(curl -fsSL -H "User-Agent: iris-installer" "$api_url" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    # 使用 jq 解析 JSON（如果可用），否则使用 grep
+    if command -v jq &> /dev/null; then
+        version=$(curl -fsSL -H "User-Agent: iris-installer" "$api_url" 2>/dev/null | jq -r '.tag_name // empty')
+    else
+        # 备用方法：使用 grep + sed 提取 tag_name
+        version=$(curl -fsSL -H "User-Agent: iris-installer" "$api_url" 2>/dev/null | grep -o '"tag_name":\s*"[^"]*"' | sed -E 's/.*"([^"]+)"/\1/')
+    fi
+
+    # 验证版本号格式（必须以 v 开头）
+    if [[ -n "$version" && ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        warning "获取到的版本号格式异常: $version"
+        version=""
+    fi
 
     if [ -z "$version" ]; then
         warning "无法从 GitHub API 获取版本号，尝试备用方法..."
         # 备用方法：从 GitHub releases 页面获取
         local releases_url="${GITHUB_PROXY}https://github.com/${REPO}/releases/latest"
-        version=$(curl -fsSL -H "User-Agent: iris-installer" "$releases_url" 2>/dev/null | grep -oP 'tag/\K[^"]+' | head -1)
+        version=$(curl -fsSL -H "User-Agent: iris-installer" "$releases_url" 2>/dev/null | grep -oE 'tag/v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
     fi
 
     if [ -z "$version" ]; then
-        error "无法获取最新版本号，请手动指定版本: VERSION=v0.1.0 bash install.sh"
+        error "无法获取最新版本号，请手动指定版本: VERSION=v0.0.1 bash install.sh"
     fi
 
     echo "$version"
