@@ -136,6 +136,16 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release
+
+          # 打包 Web UI
+          if [ -d "web" ]; then
+            tar czf release/web.tar.gz -C web .
+            echo "✓ 已打包 web.tar.gz"
+          else
+            echo "! 警告: web 目录不存在"
+          fi
+
+          # 复制构建产物
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
           ls -lh release/
 
