@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name_suffix: linux-amd64
+          # Linux ARM64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name_suffix: linux-arm64
+          # macOS x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name_suffix: darwin-amd64
+          # macOS ARM64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name_suffix: darwin-arm64
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name_suffix: windows-amd64
+            ext: .exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.target }}-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build iris-agent
+        run: cargo build --release --bin iris-agent --target ${{ matrix.target }}
+
+      - name: Build iris-server
+        run: cargo build --release --bin iris-server --target ${{ matrix.target }}
+
+      - name: Package artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          cd target/${{ matrix.target }}/release
+
+          # 复制二进制文件
+          cp iris-agent${{ matrix.ext }} ../../../dist/iris-agent-${{ matrix.artifact_name_suffix }}${{ matrix.ext }}
+          cp iris-server${{ matrix.ext }} ../../../dist/iris-server-${{ matrix.artifact_name_suffix }}${{ matrix.ext }}
+
+          cd ../../../dist
+
+          # 创建压缩包
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a iris-${{ matrix.artifact_name_suffix }}.zip iris-agent-${{ matrix.artifact_name_suffix }}${{ matrix.ext }} iris-server-${{ matrix.artifact_name_suffix }}${{ matrix.ext }}
+          else
+            tar czf iris-${{ matrix.artifact_name_suffix }}.tar.gz iris-agent-${{ matrix.artifact_name_suffix }}${{ matrix.ext }} iris-server-${{ matrix.artifact_name_suffix }}${{ matrix.ext }}
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-${{ matrix.artifact_name_suffix }}
+          path: dist/*
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
