@@ -32,6 +32,7 @@ impl Storage {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn get_latest(&self, limit: usize) -> Vec<MetricsRequest> {
         let data = self.data.read().await;
         let mut all_metrics = Vec::new();

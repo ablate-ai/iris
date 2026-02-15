@@ -72,10 +72,8 @@ impl ProbeService for ProbeServer {
         // 广播给前端
         let _ = self.broadcast.send(req.clone());
 
-        // 存储指标数据（可选：降采样）
-        if req.timestamp % 10000 == 0 {
-            self.storage.save_metrics(&req).await;
-        }
+        // 存储指标数据
+        self.storage.save_metrics(&req).await;
 
         let response = MetricsResponse {
             success: true,
@@ -107,10 +105,8 @@ impl ProbeService for ProbeServer {
                         // 1. 立即广播给前端（实时）
                         let _ = broadcast.send(metrics.clone());
 
-                        // 2. 降采样存储（每 10 秒存一次）
-                        if metrics.timestamp % 10000 == 0 {
-                            storage.save_metrics(&metrics).await;
-                        }
+                        // 2. 存储所有指标（storage 内部有清理策略）
+                        storage.save_metrics(&metrics).await;
                     }
                     Err(e) => {
                         info!("Agent {} 流式连接错误: {}", agent_id, e);
