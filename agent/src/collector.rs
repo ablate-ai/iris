@@ -251,7 +251,7 @@ fn collect_system_info(sys: &System) -> SystemInfo {
         os_name: System::name().unwrap_or_else(|| "Unknown".to_string()),
         os_version: System::os_version().unwrap_or_else(|| "Unknown".to_string()),
         kernel_version: System::kernel_version().unwrap_or_else(|| "Unknown".to_string()),
-        arch: System::cpu_arch().unwrap_or_else(|| "Unknown".to_string()),
+        arch: System::cpu_arch(),
         uptime: System::uptime(),
         cpu_model,
         cpu_frequency,
