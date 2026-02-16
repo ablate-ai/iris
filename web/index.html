@@ -1064,7 +1064,9 @@
             return <div ref={chartRef} className="chart-container" style={{height: height}}></div>;
         };
 
-        const AgentModal = ({ agent, onClose, history }) => {
+        // AgentModal 改为使用 agentId，从 agents Map 中实时获取数据
+        const AgentModal = ({ agentId, onClose, history, agents }) => {
+            const agent = agents.get(agentId);
             if (!agent) return null;
 
             const sys = agent.system;
@@ -1407,7 +1409,7 @@
             }, [connectSSE, updateAgent]);
 
             const handleAgentClick = async (agent) => {
-                setSelectedAgent(agent);
+                setSelectedAgent(agent.agent_id);  // 只保存 ID，Modal 会从 agents Map 中实时获取
                 try {
                     const historyRes = await fetch(`/api/agents/${agent.agent_id}/metrics/history?limit=20`);
                     const historyData = await historyRes.json();
@@ -1465,8 +1467,9 @@
 
                     {selectedAgent && (
                         <AgentModal
-                            agent={selectedAgent}
+                            agentId={selectedAgent}
                             history={history}
+                            agents={agents}
                             onClose={() => setSelectedAgent(null)}
                         />
                     )}
