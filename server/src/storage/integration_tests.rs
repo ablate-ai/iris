@@ -421,6 +421,43 @@ async fn test_storage_channel_full() {
 }
 
 #[tokio::test]
+async fn test_storage_sync_returns_error_when_persistence_queue_closed() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let config = StorageConfig {
+        db_path: Some(db_path),
+        cache_size_per_agent: 10,
+        batch_size: 10,
+        batch_timeout: Duration::from_secs(10),
+        channel_capacity: 100,
+        ..Default::default()
+    };
+
+    let storage = Storage::with_config(config);
+
+    storage.shutdown().await.unwrap();
+
+    let metrics = create_test_metrics("agent-1", 1000);
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        storage.save_metrics_sync(&metrics),
+    )
+    .await;
+
+    assert!(result.is_ok(), "save_metrics_sync 不应卡住");
+    assert!(
+        result.unwrap().is_err(),
+        "持久化队列关闭后应返回错误"
+    );
+}
+
+#[tokio::test]
 async fn test_storage_empty_query() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir

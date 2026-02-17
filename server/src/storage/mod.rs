@@ -531,6 +531,13 @@ impl Storage {
             }
             Err(e) => {
                 error!("Failed to flush batch ({}): {}", reason, e);
+                for ack in pending_acks.drain(..) {
+                    let _ = ack.send(Err(anyhow::anyhow!(
+                        "failed to flush batch ({}): {}",
+                        reason,
+                        e
+                    )));
+                }
                 false
             }
         }
