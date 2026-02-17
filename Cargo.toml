@@ -24,12 +24,6 @@ optional = true
 path = "server"
 optional = true
 
-# 保留原有的统一二进制（可选）
-[[bin]]
-name = "iris"
-path = "src/main.rs"
-required-features = ["agent", "server"]
-
 # Agent 独立二进制
 [[bin]]
 name = "iris-agent"
