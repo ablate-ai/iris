@@ -46,6 +46,10 @@ fn default_limit() -> usize {
     100
 }
 
+fn max_history_limit() -> usize {
+    1000
+}
+
 /// API 响应包装
 #[derive(Serialize)]
 pub struct ApiResponse<T> {
@@ -185,16 +189,17 @@ async fn get_agent_history(
     Path(agent_id): Path<String>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<ApiResponse<Vec<MetricsRequest>>>, StatusCode> {
+    let limit = query.limit.min(max_history_limit());
     let history = state
         .storage
-        .get_agent_history(&agent_id, query.limit)
+        .get_agent_history(&agent_id, limit)
         .await;
 
     if history.is_empty() {
-        info!("API: Agent {} 没有历史数据", agent_id);
-        Err(StatusCode::NOT_FOUND)
+        info!("API: Agent {} 没有历史数据，返回空列表", agent_id);
     } else {
         info!("API: 返回 {} 的 {} 条历史记录", agent_id, history.len());
-        Ok(Json(ApiResponse::ok(history)))
     }
+
+    Ok(Json(ApiResponse::ok(history)))
 }
