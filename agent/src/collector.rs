@@ -1,30 +1,31 @@
 use common::proto::{
-    CpuMetrics, DiskMetrics, MemoryMetrics, NetworkMetrics, ProcessMetrics, SystemMetrics,
-    SystemInfo, AgentMetrics,
+    AgentMetrics, CpuMetrics, DiskMetrics, MemoryMetrics, NetworkMetrics, ProcessMetrics,
+    SystemInfo, SystemMetrics,
 };
-use sysinfo::{System, Networks, Disks, Pid, ProcessRefreshKind, ProcessesToUpdate, MINIMUM_CPU_UPDATE_INTERVAL};
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
+use sysinfo::{
+    Disks, Networks, Pid, ProcessRefreshKind, ProcessesToUpdate, System,
+    MINIMUM_CPU_UPDATE_INTERVAL,
+};
 
 // 全局统计
 static METRICS_SENT: AtomicU64 = AtomicU64::new(0);
 static ERRORS_COUNT: AtomicU64 = AtomicU64::new(0);
 
 // 探针启动时间
-static AGENT_START_TIME: once_cell::sync::Lazy<Instant> =
-    once_cell::sync::Lazy::new(Instant::now);
+static AGENT_START_TIME: once_cell::sync::Lazy<Instant> = once_cell::sync::Lazy::new(Instant::now);
 
 // 全局 System 实例，用于保持 CPU 使用率采集的状态
-static SYSTEM: once_cell::sync::Lazy<Mutex<System>> =
-    once_cell::sync::Lazy::new(|| {
-        let mut sys = System::new_all();
-        // 第一次刷新，为后续采集做准备
-        sys.refresh_cpu_usage();
-        sys.refresh_memory();
-        sys.refresh_processes(ProcessesToUpdate::All, true);
-        Mutex::new(sys)
-    });
+static SYSTEM: once_cell::sync::Lazy<Mutex<System>> = once_cell::sync::Lazy::new(|| {
+    let mut sys = System::new_all();
+    // 第一次刷新，为后续采集做准备
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+    Mutex::new(sys)
+});
 
 // 标记是否已经完成初始化等待
 static CPU_INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -69,7 +70,7 @@ fn collect_agent_metrics(sys: &mut System, collection_time_ms: u64) -> AgentMetr
     sys.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[current_pid]),
         false,
-        ProcessRefreshKind::everything()
+        ProcessRefreshKind::everything(),
     );
 
     let process = sys.process(current_pid);
@@ -99,7 +100,6 @@ pub fn increment_metrics_sent() {
 pub fn increment_errors() {
     ERRORS_COUNT.fetch_add(1, Ordering::Relaxed);
 }
-
 
 fn collect_cpu_metrics(sys: &System) -> CpuMetrics {
     let cpus = sys.cpus();
@@ -156,7 +156,7 @@ fn collect_disk_metrics() -> Vec<DiskMetrics> {
                 used,
                 available,
                 usage_percent,
-                read_bytes: 0,  // sysinfo 不直接提供，需要其他方式
+                read_bytes: 0, // sysinfo 不直接提供，需要其他方式
                 write_bytes: 0,
             }
         })
@@ -209,10 +209,7 @@ fn collect_process_metrics(sys: &System) -> Vec<ProcessMetrics> {
 fn collect_system_info(sys: &System) -> SystemInfo {
     // 获取 CPU 信息
     let (cpu_model, cpu_frequency) = if let Some(cpu) = sys.cpus().first() {
-        (
-            cpu.brand().to_string(),
-            cpu.frequency() as f64,
-        )
+        (cpu.brand().to_string(), cpu.frequency() as f64)
     } else {
         ("Unknown".to_string(), 0.0)
     };

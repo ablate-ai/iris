@@ -48,7 +48,12 @@ fn create_test_metrics(agent_id: &str, timestamp: i64) -> MetricsRequest {
 #[tokio::test]
 async fn test_storage_write_and_read() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let config = StorageConfig {
         db_path: Some(db_path),
@@ -82,7 +87,12 @@ async fn test_storage_write_and_read() {
 #[tokio::test]
 async fn test_storage_multiple_agents() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let config = StorageConfig {
         db_path: Some(db_path),
@@ -120,7 +130,12 @@ async fn test_storage_multiple_agents() {
 #[tokio::test]
 async fn test_storage_history() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let config = StorageConfig {
         db_path: Some(db_path),
@@ -154,7 +169,12 @@ async fn test_storage_history() {
 #[tokio::test]
 async fn test_storage_batch_write() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // 设置较小的 batch_size 来测试批量写入
     let config = StorageConfig {
@@ -185,7 +205,12 @@ async fn test_storage_batch_write() {
 #[tokio::test]
 async fn test_storage_timeout_flush() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // 设置较短的超时时间
     let config = StorageConfig {
@@ -214,7 +239,12 @@ async fn test_storage_timeout_flush() {
 #[tokio::test]
 async fn test_storage_cache_limit() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // 设置较小的缓存大小
     let config = StorageConfig {
@@ -247,7 +277,12 @@ async fn test_storage_cache_limit() {
 #[tokio::test]
 async fn test_storage_multiple_agents_cache_isolation() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let config = StorageConfig {
         db_path: Some(db_path),
@@ -287,7 +322,12 @@ async fn test_storage_multiple_agents_cache_isolation() {
 #[tokio::test]
 async fn test_storage_shutdown() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let config = StorageConfig {
         db_path: Some(db_path),
@@ -316,7 +356,12 @@ async fn test_storage_shutdown() {
 #[tokio::test]
 async fn test_storage_channel_full() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let config = StorageConfig {
         db_path: Some(db_path),
@@ -343,7 +388,12 @@ async fn test_storage_channel_full() {
 #[tokio::test]
 async fn test_storage_empty_query() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Storage::with_config(StorageConfig {
         db_path: Some(db_path),
@@ -352,7 +402,10 @@ async fn test_storage_empty_query() {
 
     // 查询不存在的 agent
     assert!(storage.get_agent_latest("nonexistent").await.is_none());
-    assert!(storage.get_agent_history("nonexistent", 10).await.is_empty());
+    assert!(storage
+        .get_agent_history("nonexistent", 10)
+        .await
+        .is_empty());
     assert!(storage.get_all_agents().await.is_empty());
 }
 
@@ -417,7 +470,12 @@ async fn test_storage_persistence_across_restarts() {
 #[tokio::test]
 async fn test_storage_high_frequency_writes() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let config = StorageConfig {
         db_path: Some(db_path),
@@ -447,7 +505,12 @@ async fn test_storage_high_frequency_writes() {
 #[tokio::test]
 async fn test_storage_cleanup_disabled() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // 禁用清理任务
     let config = StorageConfig {
@@ -482,7 +545,12 @@ async fn test_storage_cleanup_disabled() {
 #[tokio::test]
 async fn test_storage_cleanup_shutdown() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // 启用清理任务，设置较短的时间间隔以便快速测试
     let config = StorageConfig {

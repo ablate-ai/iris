@@ -200,12 +200,8 @@ mod tests {
         let cache = Cache::new(10);
 
         // 更新同一个 agent 的数据
-        cache
-            .update(create_test_metrics("agent-1", 1000))
-            .await;
-        cache
-            .update(create_test_metrics("agent-1", 2000))
-            .await;
+        cache.update(create_test_metrics("agent-1", 1000)).await;
+        cache.update(create_test_metrics("agent-1", 2000)).await;
 
         let latest = cache.get_latest("agent-1").await.unwrap();
         assert_eq!(latest.timestamp, 2000);
@@ -309,9 +305,7 @@ mod tests {
         // 10 个任务并发读取
         for _ in 0..10 {
             let cache_clone = cache.clone();
-            let handle = tokio::spawn(async move {
-                cache_clone.get_latest("agent-1").await
-            });
+            let handle = tokio::spawn(async move { cache_clone.get_latest("agent-1").await });
             handles.push(handle);
         }
 
@@ -341,9 +335,7 @@ mod tests {
 
         // 写入大量数据
         for i in 0..500 {
-            cache
-                .update(create_test_metrics("agent-1", i))
-                .await;
+            cache.update(create_test_metrics("agent-1", i)).await;
         }
 
         let history = cache.get_history("agent-1", 200).await;
@@ -367,9 +359,7 @@ mod tests {
         ];
 
         for id in &special_ids {
-            cache
-                .update(create_test_metrics(id, 1000))
-                .await;
+            cache.update(create_test_metrics(id, 1000)).await;
         }
 
         let agents = cache.get_all_agents().await;
@@ -386,9 +376,7 @@ mod tests {
         let cache = Cache::new(10);
         let cache_clone = cache.clone();
 
-        cache
-            .update(create_test_metrics("agent-1", 1000))
-            .await;
+        cache.update(create_test_metrics("agent-1", 1000)).await;
 
         // clone 的实例应该能访问相同的数据
         let latest = cache_clone.get_latest("agent-1").await.unwrap();

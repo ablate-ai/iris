@@ -21,11 +21,7 @@ impl Agent {
         // 优先使用环境变量 IRIS_HOSTNAME，否则使用系统 hostname
         let hostname = std::env::var("IRIS_HOSTNAME")
             .ok()
-            .or_else(|| {
-                hostname::get()
-                    .ok()
-                    .and_then(|h| h.into_string().ok())
-            })
+            .or_else(|| hostname::get().ok().and_then(|h| h.into_string().ok()))
             .unwrap_or_else(|| "unknown".to_string());
 
         Self {

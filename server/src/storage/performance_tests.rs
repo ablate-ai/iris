@@ -47,7 +47,12 @@ fn create_test_metrics(agent_id: &str, timestamp: i64) -> MetricsRequest {
 #[tokio::test]
 async fn test_performance_single_write() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Storage::with_config(StorageConfig {
         db_path: Some(db_path),
@@ -61,13 +66,22 @@ async fn test_performance_single_write() {
     let elapsed = start.elapsed();
 
     // 单次写入应该在 1ms 内完成（只是写入缓存和发送到通道）
-    assert!(elapsed.as_millis() < 10, "Single write took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_millis() < 10,
+        "Single write took too long: {:?}",
+        elapsed
+    );
 }
 
 #[tokio::test]
 async fn test_performance_batch_writes() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Storage::with_config(StorageConfig {
         db_path: Some(db_path),
@@ -102,7 +116,12 @@ async fn test_performance_batch_writes() {
 #[tokio::test]
 async fn test_performance_cache_read() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Storage::with_config(StorageConfig {
         db_path: Some(db_path),
@@ -132,13 +151,22 @@ async fn test_performance_cache_read() {
     );
 
     // 缓存读取应该非常快
-    assert!(throughput > 10000.0, "Cache read throughput too low: {:.2}", throughput);
+    assert!(
+        throughput > 10000.0,
+        "Cache read throughput too low: {:.2}",
+        throughput
+    );
 }
 
 #[tokio::test]
 async fn test_concurrent_single_agent_writes() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Arc::new(Storage::with_config(StorageConfig {
         db_path: Some(db_path),
@@ -193,7 +221,12 @@ async fn test_concurrent_single_agent_writes() {
 #[tokio::test]
 async fn test_concurrent_multiple_agents_writes() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Arc::new(Storage::with_config(StorageConfig {
         db_path: Some(db_path),
@@ -252,7 +285,12 @@ async fn test_concurrent_multiple_agents_writes() {
 #[tokio::test]
 async fn test_concurrent_reads_and_writes() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Arc::new(Storage::with_config(StorageConfig {
         db_path: Some(db_path),
@@ -302,7 +340,12 @@ async fn test_concurrent_reads_and_writes() {
 #[tokio::test]
 async fn test_concurrent_get_all_agents() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Arc::new(Storage::with_config(StorageConfig {
         db_path: Some(db_path),
@@ -322,9 +365,7 @@ async fn test_concurrent_get_all_agents() {
     // 并发获取所有 agent
     for _ in 0..num_tasks {
         let storage_clone = storage.clone();
-        let handle = tokio::spawn(async move {
-            storage_clone.get_all_agents().await
-        });
+        let handle = tokio::spawn(async move { storage_clone.get_all_agents().await });
         handles.push(handle);
     }
 
@@ -338,7 +379,12 @@ async fn test_concurrent_get_all_agents() {
 #[tokio::test]
 async fn test_memory_leak_simulation() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Storage::with_config(StorageConfig {
         db_path: Some(db_path),
@@ -366,7 +412,12 @@ async fn test_memory_leak_simulation() {
 #[tokio::test]
 async fn test_stress_multiple_agents_with_different_rates() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Arc::new(Storage::with_config(StorageConfig {
         db_path: Some(db_path),
@@ -406,14 +457,24 @@ async fn test_stress_multiple_agents_with_different_rates() {
         let expected = 50 + agent_id * 50;
         let agent_id_str = format!("agent-{}", agent_id);
         let history = storage.get_agent_history(&agent_id_str, 200).await;
-        assert_eq!(history.len(), expected.min(100), "Agent {} has wrong count", agent_id);
+        assert_eq!(
+            history.len(),
+            expected.min(100),
+            "Agent {} has wrong count",
+            agent_id
+        );
     }
 }
 
 #[tokio::test]
 async fn test_large_payload_performance() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
 
     let storage = Storage::with_config(StorageConfig {
         db_path: Some(db_path),

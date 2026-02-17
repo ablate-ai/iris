@@ -1,7 +1,10 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::{IntoResponse, sse::{Event, Sse}},
+    response::{
+        sse::{Event, Sse},
+        IntoResponse,
+    },
     routing::get,
     Json, Router,
 };
@@ -71,7 +74,10 @@ impl<T: Serialize> ApiResponse<T> {
 }
 
 /// 创建 HTTP API 路由
-pub fn create_router(storage: std::sync::Arc<Storage>, broadcast: broadcast::Sender<MetricsRequest>) -> Router {
+pub fn create_router(
+    storage: std::sync::Arc<Storage>,
+    broadcast: broadcast::Sender<MetricsRequest>,
+) -> Router {
     let state = ApiState { storage, broadcast };
 
     let cors = CorsLayer::new()
@@ -131,7 +137,7 @@ async fn sse_handler(
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(Duration::from_secs(15))
-            .text("keep-alive")
+            .text("keep-alive"),
     )
 }
 
@@ -179,7 +185,10 @@ async fn get_agent_history(
     Path(agent_id): Path<String>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<ApiResponse<Vec<MetricsRequest>>>, StatusCode> {
-    let history = state.storage.get_agent_history(&agent_id, query.limit).await;
+    let history = state
+        .storage
+        .get_agent_history(&agent_id, query.limit)
+        .await;
 
     if history.is_empty() {
         info!("API: Agent {} 没有历史数据", agent_id);
