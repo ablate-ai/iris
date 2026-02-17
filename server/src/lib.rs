@@ -209,11 +209,8 @@ impl ProbeService for ProbeServer {
         // 广播给前端
         let _ = self.broadcast.send(req.clone());
 
-        // 存储指标数据（等待持久化完成）
-        self.storage
-            .save_metrics_sync(&req)
-            .await
-            .map_err(|e| Status::internal(format!("持久化失败: {}", e)))?;
+        // 存储指标数据（异步持久化，不阻塞响应）
+        self.storage.save_metrics(&req).await;
 
         let response = MetricsResponse {
             success: true,
@@ -245,10 +242,8 @@ impl ProbeService for ProbeServer {
                         // 1. 立即广播给前端（实时）
                         let _ = broadcast.send(metrics.clone());
 
-                        // 2. 存储所有指标（storage 内部有清理策略）
-                        if let Err(e) = storage.save_metrics_sync(&metrics).await {
-                            info!("Agent {} 指标持久化失败: {}", agent_id, e);
-                        }
+                        // 2. 存储所有指标（异步持久化，不阻塞接收）
+                        storage.save_metrics(&metrics).await;
                     }
                     Err(e) => {
                         info!("Agent {} 流式连接错误: {}", agent_id, e);
