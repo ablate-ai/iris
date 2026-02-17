@@ -327,7 +327,12 @@ main() {
         # 尝试创建数据目录（生产环境持久化）
         local data_dir="/var/lib/iris"
         local has_data_dir=false
-        if can_sudo_or_root; then
+
+        # 检查目录是否已存在
+        if [ -d "$data_dir" ]; then
+            info "数据目录已存在: ${data_dir}"
+            has_data_dir=true
+        elif can_sudo_or_root; then
             local prefix=$(get_prefix_cmd)
             info "创建数据目录: ${data_dir}"
             if ${prefix} mkdir -p "$data_dir" 2>/dev/null; then
@@ -335,7 +340,7 @@ main() {
                 if [ "$(id -u)" != "0" ]; then
                     ${prefix} chown "$(whoami)" "$data_dir" 2>/dev/null || true
                 fi
-                success "数据将持久化到 ${data_dir}"
+                success "数据目录创建成功: ${data_dir}"
                 has_data_dir=true
             else
                 warning "无法创建 ${data_dir}"
@@ -344,8 +349,15 @@ main() {
             warning "无 sudo 权限，无法创建 ${data_dir}"
         fi
 
-        if [ "$has_data_dir" = false ]; then
+        if [ "$has_data_dir" = true ]; then
+            success "数据将持久化到 ${data_dir}/metrics.redb"
+        else
             warning "数据不会持久化（仅内存模式），重启后数据将丢失"
+            echo ""
+            echo -e "${YELLOW}提示：要启用数据持久化，请手动创建数据目录：${NC}"
+            echo -e "  ${GREEN}sudo mkdir -p ${data_dir}${NC}"
+            echo -e "  ${GREEN}sudo chown \$(whoami) ${data_dir}${NC}"
+            echo ""
         fi
 
         # 尝试使用 systemd 启动
