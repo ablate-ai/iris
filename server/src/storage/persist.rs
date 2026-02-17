@@ -6,7 +6,9 @@ use anyhow::Result;
 use common::proto::MetricsRequest;
 use redb::{Database, ReadableTable, TableDefinition};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info};
 
 /// 表定义: metrics
@@ -18,6 +20,9 @@ const METRICS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metric
 /// Key: agent_id
 /// Value: 最新时间戳 (i64 序列化)
 const AGENT_LATEST_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("agent_latest");
+
+/// 进程内递增序号，用于避免同毫秒 key 冲突
+static KEY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// 持久化存储
 #[derive(Clone)]
@@ -70,17 +75,36 @@ impl PersistStorage {
         Ok(())
     }
 
-    /// 生成复合键: "agent_id\0timestamp"
-    /// 使用 \0 作为分隔符，timestamp 使用固定 20 位数字，确保正确排序
+    /// 生成复合键: "agent_id\0timestamp\0nonce"
+    /// timestamp 固定 20 位用于排序；nonce 避免同毫秒覆盖
     fn make_key(agent_id: &str, timestamp: i64) -> String {
-        format!("{}\0{:020}", agent_id, timestamp)
+        let now_nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let seq = KEY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        format!(
+            "{}\0{:020}\0{:032x}{:016x}",
+            agent_id, timestamp, now_nanos, seq
+        )
     }
 
     /// 解析复合键，返回 (agent_id, timestamp)
     fn parse_key(key: &str) -> Option<(&str, i64)> {
-        let (agent_id, ts_str) = key.split_once('\0')?;
-        let timestamp = ts_str.parse::<i64>().ok()?;
-        Some((agent_id, timestamp))
+        // 新格式: agent_id\0timestamp\0nonce
+        if let Some((agent_id, rest)) = key.split_once('\0') {
+            let ts_str = rest.split('\0').next().unwrap_or(rest);
+            let timestamp = ts_str.parse::<i64>().ok()?;
+            return Some((agent_id, timestamp));
+        }
+
+        // 兼容旧格式: agent_id:timestamp（按最后一个冒号分割）
+        if let Some((agent_id, ts_str)) = key.rsplit_once(':') {
+            let timestamp = ts_str.parse::<i64>().ok()?;
+            return Some((agent_id, timestamp));
+        }
+
+        None
     }
 
     /// 为查询构造 key 范围的起始和结束边界
@@ -88,9 +112,8 @@ impl PersistStorage {
     fn make_key_range(agent_id: &str) -> (String, String) {
         // 起始: "agent_id\0"
         let start = format!("{}\0", agent_id);
-        // 结束: "agent_id\0" 后面跟着 20 个 '9'（最大可能的 timestamp）
-        // 由于 timestamp 是固定 20 位，999...999 是最大值
-        let end = format!("{}\0{:020}", agent_id, i64::MAX);
+        // 结束: 在最大 timestamp 后追加最大 Unicode 字符，覆盖带 nonce 的 key
+        let end = format!("{}\0{:020}\u{10ffff}", agent_id, i64::MAX);
         (start, end)
     }
 
@@ -184,6 +207,23 @@ impl PersistStorage {
                 }
             }
 
+            // 兼容旧格式 key（agent_id:timestamp）
+            let all_iter = table.iter()?;
+            for item in all_iter {
+                let (key, value) = item?;
+                let key_str = key.value();
+                if key_str.contains('\0') {
+                    continue;
+                }
+                if let Some((id, ts)) = Self::parse_key(key_str) {
+                    if id == agent_id && ts >= start_ts && ts <= end_ts {
+                        let metrics: MetricsRequest = bincode::deserialize(value.value())?;
+                        results.push(metrics);
+                    }
+                }
+            }
+
+            results.sort_by_key(|m| m.timestamp);
             Ok::<Vec<MetricsRequest>, anyhow::Error>(results)
         })
         .await
@@ -212,6 +252,114 @@ impl PersistStorage {
                     }
                 }
                 None => Ok(None),
+            }
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
+    }
+
+    /// 获取指定 Agent 的最新指标
+    pub async fn get_latest_metrics(&self, agent_id: &str) -> Result<Option<MetricsRequest>> {
+        let db = self.db.clone();
+        let agent_id = agent_id.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let read_txn = db.begin_read()?;
+            let table = read_txn.open_table(METRICS_TABLE)?;
+            let (start_prefix, end_prefix) = Self::make_key_range(&agent_id);
+
+            let mut latest: Option<MetricsRequest> = None;
+
+            let iter = table.range(start_prefix.as_str()..end_prefix.as_str())?;
+            for item in iter {
+                let (key, value) = item?;
+                let key_str = key.value();
+                if let Some((id, ts)) = Self::parse_key(key_str) {
+                    if id == agent_id {
+                        let metrics: MetricsRequest = bincode::deserialize(value.value())?;
+                        if latest.as_ref().map(|m| m.timestamp).unwrap_or(i64::MIN) <= ts {
+                            latest = Some(metrics);
+                        }
+                    }
+                }
+            }
+
+            // 兼容旧格式 key（agent_id:timestamp）
+            let all_iter = table.iter()?;
+            for item in all_iter {
+                let (key, value) = item?;
+                let key_str = key.value();
+                if key_str.contains('\0') {
+                    continue;
+                }
+                if let Some((id, ts)) = Self::parse_key(key_str) {
+                    if id == agent_id {
+                        let metrics: MetricsRequest = bincode::deserialize(value.value())?;
+                        if latest.as_ref().map(|m| m.timestamp).unwrap_or(i64::MIN) <= ts {
+                            latest = Some(metrics);
+                        }
+                    }
+                }
+            }
+
+            Ok::<Option<MetricsRequest>, anyhow::Error>(latest)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
+    }
+
+    /// 获取指定 Agent 最新 limit 条指标
+    pub async fn query_latest_by_agent(
+        &self,
+        agent_id: &str,
+        limit: usize,
+    ) -> Result<Vec<MetricsRequest>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let db = self.db.clone();
+        let agent_id = agent_id.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let read_txn = db.begin_read()?;
+            let table = read_txn.open_table(METRICS_TABLE)?;
+            let (start_prefix, end_prefix) = Self::make_key_range(&agent_id);
+
+            let mut results = Vec::new();
+            let iter = table.range(start_prefix.as_str()..end_prefix.as_str())?;
+            for item in iter {
+                let (key, value) = item?;
+                let key_str = key.value();
+                if let Some((id, _)) = Self::parse_key(key_str) {
+                    if id == agent_id {
+                        let metrics: MetricsRequest = bincode::deserialize(value.value())?;
+                        results.push(metrics);
+                    }
+                }
+            }
+
+            // 兼容旧格式 key（agent_id:timestamp）
+            let all_iter = table.iter()?;
+            for item in all_iter {
+                let (key, value) = item?;
+                let key_str = key.value();
+                if key_str.contains('\0') {
+                    continue;
+                }
+                if let Some((id, _)) = Self::parse_key(key_str) {
+                    if id == agent_id {
+                        let metrics: MetricsRequest = bincode::deserialize(value.value())?;
+                        results.push(metrics);
+                    }
+                }
+            }
+
+            results.sort_by_key(|m| m.timestamp);
+            if results.len() > limit {
+                Ok::<Vec<MetricsRequest>, anyhow::Error>(results[results.len() - limit..].to_vec())
+            } else {
+                Ok::<Vec<MetricsRequest>, anyhow::Error>(results)
             }
         })
         .await
@@ -248,8 +396,8 @@ impl PersistStorage {
         let agent_id = agent_id.to_string();
 
         tokio::task::spawn_blocking(move || {
-            // 先读取该 agent 的所有 key（按字典序即时间戳排序）
-            let keys: Vec<String> = {
+            // 先读取该 agent 的所有 key
+            let mut records: Vec<(i64, String)> = {
                 let read_txn = db.begin_read()?;
                 let table = read_txn.open_table(METRICS_TABLE)?;
 
@@ -259,12 +407,38 @@ impl PersistStorage {
                 let mut keys = Vec::new();
                 for item in iter {
                     let (key, _) = item?;
-                    keys.push(key.value().to_string());
+                    let key_str = key.value().to_string();
+                    if let Some((id, ts)) = Self::parse_key(&key_str) {
+                        if id == agent_id {
+                            keys.push((ts, key_str));
+                        }
+                    }
                 }
                 keys
             };
 
-            let total = keys.len();
+            // 兼容旧格式 key（agent_id:timestamp）
+            {
+                let read_txn = db.begin_read()?;
+                let table = read_txn.open_table(METRICS_TABLE)?;
+                let iter = table.iter()?;
+                for item in iter {
+                    let (key, _) = item?;
+                    let key_str = key.value().to_string();
+                    if key_str.contains('\0') {
+                        continue;
+                    }
+                    if let Some((id, ts)) = Self::parse_key(&key_str) {
+                        if id == agent_id {
+                            records.push((ts, key_str));
+                        }
+                    }
+                }
+            }
+
+            records.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+            let total = records.len();
             if total <= keep_count {
                 debug!(
                     "Agent {} has {} records, keeping {} records, no deletion needed",
@@ -273,9 +447,16 @@ impl PersistStorage {
                 return Ok(0);
             }
 
-            // key 按字典序排列，时间戳小的在前，删除前面的旧记录
             let delete_count = total - keep_count;
-            let keys_to_delete = &keys[..delete_count];
+            let keys_to_delete: Vec<String> = records[..delete_count]
+                .iter()
+                .map(|(_, k)| k.clone())
+                .collect();
+            let latest_after = if delete_count < records.len() {
+                Some(records[records.len() - 1].0)
+            } else {
+                None
+            };
 
             // 分批删除，每批最多 10000 条，避免单次事务过大
             const BATCH_SIZE: usize = 10000;
@@ -292,6 +473,19 @@ impl PersistStorage {
                 write_txn.commit()?;
                 total_deleted += chunk.len();
             }
+
+            // 同步更新 agent_latest 索引，避免陈旧数据
+            let write_txn = db.begin_write()?;
+            {
+                let mut latest_table = write_txn.open_table(AGENT_LATEST_TABLE)?;
+                if let Some(ts) = latest_after {
+                    let ts_bytes = ts.to_be_bytes();
+                    latest_table.insert(agent_id.as_str(), ts_bytes.as_slice())?;
+                } else {
+                    latest_table.remove(agent_id.as_str())?;
+                }
+            }
+            write_txn.commit()?;
 
             info!(
                 "Agent {} deleted {} old records, keeping {} records",
@@ -328,12 +522,13 @@ impl PersistStorage {
             // 对每个 agent 分别处理，避免一次性遍历整个表
             for agent_id in agent_ids {
                 // 收集该 agent 需要删除的 key
-                let keys_to_delete: Vec<String> = {
+                let (keys_to_delete, latest_remaining_ts): (Vec<String>, Option<i64>) = {
                     let read_txn = db.begin_read()?;
                     let table = read_txn.open_table(METRICS_TABLE)?;
 
                     let (start_prefix, end_prefix) = Self::make_key_range(&agent_id);
                     let mut keys = Vec::new();
+                    let mut latest_ts: Option<i64> = None;
                     let iter = table.range(start_prefix.as_str()..end_prefix.as_str())?;
 
                     for item in iter {
@@ -342,14 +537,37 @@ impl PersistStorage {
                         if let Some((_, ts)) = Self::parse_key(key_str) {
                             if ts < before_ts {
                                 keys.push(key_str.to_string());
+                            } else if latest_ts.map(|v| ts > v).unwrap_or(true) {
+                                latest_ts = Some(ts);
                             }
                         }
                     }
-                    keys
+                    (keys, latest_ts)
                 };
 
-                if keys_to_delete.is_empty() {
-                    continue;
+                // 兼容旧格式 key（agent_id:timestamp）
+                let mut keys_to_delete = keys_to_delete;
+                let mut latest_remaining_ts = latest_remaining_ts;
+                {
+                    let read_txn = db.begin_read()?;
+                    let table = read_txn.open_table(METRICS_TABLE)?;
+                    let iter = table.iter()?;
+                    for item in iter {
+                        let (key, _) = item?;
+                        let key_str = key.value();
+                        if key_str.contains('\0') {
+                            continue;
+                        }
+                        if let Some((id, ts)) = Self::parse_key(key_str) {
+                            if id == agent_id {
+                                if ts < before_ts {
+                                    keys_to_delete.push(key_str.to_string());
+                                } else if latest_remaining_ts.map(|v| ts > v).unwrap_or(true) {
+                                    latest_remaining_ts = Some(ts);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // 分批删除，每批最多 10000 条
@@ -365,6 +583,19 @@ impl PersistStorage {
                     write_txn.commit()?;
                     total_deleted += chunk.len();
                 }
+
+                // 同步更新 agent_latest 索引
+                let write_txn = db.begin_write()?;
+                {
+                    let mut latest_table = write_txn.open_table(AGENT_LATEST_TABLE)?;
+                    if let Some(ts) = latest_remaining_ts {
+                        let ts_bytes = ts.to_be_bytes();
+                        latest_table.insert(agent_id.as_str(), ts_bytes.as_slice())?;
+                    } else {
+                        latest_table.remove(agent_id.as_str())?;
+                    }
+                }
+                write_txn.commit()?;
             }
 
             if total_deleted > 0 {
@@ -378,7 +609,6 @@ impl PersistStorage {
         .await
         .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
     }
-
 }
 
 #[cfg(test)]
@@ -427,15 +657,13 @@ mod tests {
                     errors_in: 0,
                     errors_out: 0,
                 }),
-                processes: vec![
-                    ProcessMetrics {
-                        pid: 1234,
-                        name: "test-process".to_string(),
-                        cpu_usage: 10.0,
-                        memory: 100_000_000,
-                        status: "Running".to_string(),
-                    },
-                ],
+                processes: vec![ProcessMetrics {
+                    pid: 1234,
+                    name: "test-process".to_string(),
+                    cpu_usage: 10.0,
+                    memory: 100_000_000,
+                    status: "Running".to_string(),
+                }],
                 system_info: Some(SystemInfo {
                     os_name: "Linux".to_string(),
                     os_version: "5.15.0".to_string(),
@@ -461,7 +689,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -474,10 +707,7 @@ mod tests {
         storage.flush_batch(&metrics).await.unwrap();
 
         // 验证查询
-        let result = storage
-            .query_by_agent("agent-1", 0, 9999)
-            .await
-            .unwrap();
+        let result = storage.query_by_agent("agent-1", 0, 9999).await.unwrap();
         assert_eq!(result.len(), 2);
 
         let latest_ts = storage
@@ -491,7 +721,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_query_range() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -504,10 +739,7 @@ mod tests {
         storage.flush_batch(&metrics).await.unwrap();
 
         // 查询范围: 1500-2500，应该只有 2000
-        let result = storage
-            .query_by_agent("agent-1", 1500, 2500)
-            .await
-            .unwrap();
+        let result = storage.query_by_agent("agent-1", 1500, 2500).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].timestamp, 2000);
     }
@@ -515,7 +747,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_empty_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
         storage.flush_batch(&[]).await.unwrap(); // 不应该 panic
@@ -524,7 +761,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_update_existing() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -534,23 +776,25 @@ mod tests {
             .await
             .unwrap();
 
-        // 更新同一 key 的数据（应该覆盖）
+        // 同一毫秒重复写入应保留多条（避免覆盖丢数据）
         storage
             .flush_batch(&[create_test_metrics("agent-1", 1000)])
             .await
             .unwrap();
 
-        let result = storage
-            .query_by_agent("agent-1", 0, 9999)
-            .await
-            .unwrap();
-        assert_eq!(result.len(), 1);
+        let result = storage.query_by_agent("agent-1", 0, 9999).await.unwrap();
+        assert_eq!(result.len(), 2);
     }
 
     #[tokio::test]
     async fn test_persist_query_nonexistent_agent() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -564,7 +808,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_get_latest_nonexistent() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -578,7 +827,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_multiple_batches() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -590,10 +844,7 @@ mod tests {
                 .unwrap();
         }
 
-        let result = storage
-            .query_by_agent("agent-1", 0, 99999)
-            .await
-            .unwrap();
+        let result = storage.query_by_agent("agent-1", 0, 99999).await.unwrap();
         assert_eq!(result.len(), 10);
 
         let latest = storage
@@ -607,7 +858,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_key_format() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -623,10 +879,7 @@ mod tests {
 
         // 验证每个 agent 都能正确查询
         for (i, id) in special_ids.iter().enumerate() {
-            let result = storage
-                .query_by_agent(id, 0, 99999)
-                .await
-                .unwrap();
+            let result = storage.query_by_agent(id, 0, 99999).await.unwrap();
             assert_eq!(result.len(), 1, "Failed for agent_id: {}", id);
             assert_eq!(result[0].timestamp, (i as i64) * 1000);
         }
@@ -635,7 +888,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_large_data() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -646,10 +904,7 @@ mod tests {
 
         storage.flush_batch(&metrics).await.unwrap();
 
-        let result = storage
-            .query_by_agent("agent-1", 0, 2000)
-            .await
-            .unwrap();
+        let result = storage.query_by_agent("agent-1", 0, 2000).await.unwrap();
         assert_eq!(result.len(), 1000);
     }
 
@@ -696,7 +951,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_concurrent_reads() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -730,7 +990,12 @@ mod tests {
     #[tokio::test]
     async fn test_persist_timestamp_ordering() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -743,10 +1008,7 @@ mod tests {
                 .unwrap();
         }
 
-        let result = storage
-            .query_by_agent("agent-1", 0, 10000)
-            .await
-            .unwrap();
+        let result = storage.query_by_agent("agent-1", 0, 10000).await.unwrap();
 
         // 验证所有数据都被存储
         assert_eq!(result.len(), 5);
@@ -778,10 +1040,7 @@ mod tests {
 
         // 重新打开数据库
         let storage = PersistStorage::new(&db_path).unwrap();
-        let result = storage
-            .query_by_agent("agent-1", 0, 9999)
-            .await
-            .unwrap();
+        let result = storage.query_by_agent("agent-1", 0, 9999).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].timestamp, 1000);
     }
@@ -789,7 +1048,12 @@ mod tests {
     #[tokio::test]
     async fn test_get_all_agent_ids() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -813,7 +1077,12 @@ mod tests {
     #[tokio::test]
     async fn test_delete_old_records() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -837,7 +1106,12 @@ mod tests {
     #[tokio::test]
     async fn test_delete_old_records_keep_more_than_exists() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -858,7 +1132,12 @@ mod tests {
     #[tokio::test]
     async fn test_delete_before_timestamp() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
@@ -891,7 +1170,12 @@ mod tests {
     #[tokio::test]
     async fn test_delete_before_timestamp_no_match() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let storage = PersistStorage::new(&db_path).unwrap();
 
