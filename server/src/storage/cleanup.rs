@@ -22,11 +22,15 @@ pub struct CleanupTask {
 
 impl CleanupTask {
     /// 创建清理任务
-    pub fn new(config: StorageConfig, storage: Arc<PersistStorage>) -> Self {
-        // 输入验证
-        assert!(config.cleanup_interval_hours > 0, "cleanup_interval_hours must be positive");
-        assert!(config.max_records_per_agent > 0, "max_records_per_agent must be positive");
-        // retention_days 允许为 0（禁用时间清理）
+    pub fn new(mut config: StorageConfig, storage: Arc<PersistStorage>) -> Self {
+        if config.cleanup_interval_hours == 0 {
+            warn!("cleanup_interval_hours is 0, using 1 hour as fallback");
+            config.cleanup_interval_hours = 1;
+        }
+        if config.max_records_per_agent == 0 {
+            warn!("max_records_per_agent is 0, using 1 as fallback");
+            config.max_records_per_agent = 1;
+        }
 
         Self {
             config,
@@ -133,8 +137,9 @@ impl CleanupTask {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs() as i64;
-            let cutoff_ts = now.saturating_sub(self.config.retention_days.saturating_mul(86400) as i64);
+                .as_millis() as i64;
+            let retention_ms = self.config.retention_days.saturating_mul(86_400_000) as i64;
+            let cutoff_ts = now.saturating_sub(retention_ms);
             match self.storage.delete_before_timestamp(cutoff_ts).await {
                 Ok(deleted) => deleted,
                 Err(e) => {
