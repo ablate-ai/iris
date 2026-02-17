@@ -17,7 +17,7 @@ use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
-use crate::assets::{serve_asset, serve_index};
+use crate::assets::{serve_asset, serve_index, serve_spa};
 use crate::storage::Storage;
 use common::proto::MetricsRequest;
 
@@ -95,7 +95,7 @@ pub fn create_router(
         .route("/api/agents/:id/metrics/history", get(get_agent_history))
         .route("/assets/*path", get(serve_asset))
         .route("/", get(serve_index))
-        .route("/*path", get(serve_asset))
+        .route("/*path", get(serve_spa))
         .layer(cors)
         .with_state(Arc::new(state))
 }

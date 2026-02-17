@@ -7,6 +7,7 @@ use common::utils::current_timestamp_ms;
 use std::path::Path;
 use tokio::signal;
 use tokio::sync::broadcast;
+use tokio::sync::watch;
 use tokio_stream::StreamExt;
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::info;
@@ -49,6 +50,12 @@ impl ProbeServer {
             ..Default::default()
         };
         let storage = std::sync::Arc::new(storage::Storage::with_config(config));
+        if !storage.is_persist_enabled() {
+            return Err(anyhow::anyhow!(
+                "Storage 持久化初始化失败，拒绝以仅内存模式启动（db_path={})",
+                db_path
+            ));
+        }
 
         info!("Storage initialized with db_path: {}", db_path);
 
@@ -83,37 +90,103 @@ impl ProbeServer {
         let storage_for_shutdown = server.storage.clone();
         let storage = server.storage.clone();
         let broadcast = server.broadcast.clone();
+        let server_for_grpc = server;
 
         // 启动 HTTP API 服务器（端口 +1）
         let http_port = grpc_addr.port() + 1;
         let http_addr = format!("{}:{}", grpc_addr.ip(), http_port);
-        let http_addr_clone = http_addr.clone();
+        let http_listener = tokio::net::TcpListener::bind(&http_addr).await?;
 
-        tokio::spawn(async move {
+        let (shutdown_tx, _) = watch::channel(false);
+
+        let mut http_shutdown_rx = shutdown_tx.subscribe();
+        let mut grpc_shutdown_rx = shutdown_tx.subscribe();
+
+        let mut http_handle = tokio::spawn(async move {
             let app = api::create_router(storage, broadcast);
-            let listener = tokio::net::TcpListener::bind(&http_addr_clone)
+            info!("HTTP API 启动在 http://{}", http_addr);
+            axum::serve(http_listener, app)
+                .with_graceful_shutdown(async move {
+                    while !*http_shutdown_rx.borrow() {
+                        if http_shutdown_rx.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                })
                 .await
-                .expect("无法绑定 HTTP 端口");
-
-            info!("HTTP API 启动在 http://{}", http_addr_clone);
-            axum::serve(listener, app)
-                .await
-                .expect("HTTP 服务器启动失败");
+                .map_err(anyhow::Error::from)
         });
 
-        info!("gRPC Server 启动在 {}", grpc_addr);
+        let mut grpc_handle = tokio::spawn(async move {
+            info!("gRPC Server 启动在 {}", grpc_addr);
+            let shutdown_signal = async move {
+                tokio::select! {
+                    r = signal::ctrl_c() => {
+                        if let Err(e) = r {
+                            tracing::error!("无法监听 Ctrl+C 信号: {}", e);
+                        } else {
+                            info!("收到关闭信号，正在优雅关闭...");
+                        }
+                    }
+                    _ = async {
+                        while !*grpc_shutdown_rx.borrow() {
+                            if grpc_shutdown_rx.changed().await.is_err() {
+                                break;
+                            }
+                        }
+                    } => {}
+                }
+            };
 
-        // 设置优雅关闭
-        let shutdown_signal = async {
-            signal::ctrl_c().await.expect("无法监听 Ctrl+C 信号");
-            info!("收到关闭信号，正在优雅关闭...");
-        };
+            Server::builder()
+                .add_service(ProbeServiceServer::new(server_for_grpc))
+                .serve_with_shutdown(grpc_addr, shutdown_signal)
+                .await
+                .map_err(anyhow::Error::from)
+        });
 
-        // 同时监听 gRPC 服务和关闭信号
-        Server::builder()
-            .add_service(ProbeServiceServer::new(server))
-            .serve_with_shutdown(grpc_addr, shutdown_signal)
-            .await?;
+        tokio::select! {
+            grpc_result = &mut grpc_handle => {
+                let _ = shutdown_tx.send(true);
+                grpc_result.map_err(|e| anyhow::anyhow!("gRPC 任务异常退出: {}", e))??;
+
+                match tokio::time::timeout(std::time::Duration::from_secs(5), &mut http_handle).await {
+                    Ok(join_result) => {
+                        join_result.map_err(|e| anyhow::anyhow!("HTTP 任务异常退出: {}", e))??;
+                    }
+                    Err(_) => {
+                        info!("HTTP 任务未在超时内退出，正在中止...");
+                        http_handle.abort();
+                    }
+                }
+            }
+            http_result = &mut http_handle => {
+                let _ = shutdown_tx.send(true);
+                let http_err = match http_result {
+                    Ok(Ok(())) => {
+                        anyhow::anyhow!("HTTP 服务器意外退出")
+                    }
+                    Ok(Err(e)) => {
+                        anyhow::anyhow!("HTTP 服务器启动/运行失败: {}", e)
+                    }
+                    Err(e) => {
+                        anyhow::anyhow!("HTTP 任务异常退出: {}", e)
+                    }
+                };
+
+                match tokio::time::timeout(std::time::Duration::from_secs(5), &mut grpc_handle).await {
+                    Ok(join_result) => {
+                        join_result.map_err(|e| anyhow::anyhow!("gRPC 任务异常退出: {}", e))??;
+                    }
+                    Err(_) => {
+                        info!("gRPC 任务未在超时内退出，正在中止...");
+                        grpc_handle.abort();
+                    }
+                }
+
+                return Err(http_err);
+            }
+        }
 
         // 关闭 Storage，确保数据全部写入
         info!("正在关闭 Storage...");

@@ -4,6 +4,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
 #[command(name = "iris-agent")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Iris Agent - 服务器监控探针", long_about = None)]
 struct Cli {
     /// Server 地址

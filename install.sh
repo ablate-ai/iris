@@ -11,6 +11,7 @@ NC='\033[0m' # No Color
 # 默认配置
 REPO="ablate-ai/iris"
 INSTALL_DIR="/usr/local/bin"
+VERSION="${VERSION:-latest}"
 
 # 配置了 IRIS_SERVER 就是 agent，否则是 server
 IRIS_SERVER="${IRIS_SERVER:-}"
@@ -173,6 +174,7 @@ Iris 一键安装脚本
 环境变量:
   IRIS_SERVER     server 地址（设置此值则安装 agent，否则安装 server）
   IRIS_HOSTNAME   自定义显示名称（可选，默认使用系统 hostname）
+  VERSION         指定版本号（默认: latest）
   GITHUB_PROXY    GitHub 代理（用于加速下载，如：https://mirror.ghproxy.com/）
 
 说明:
@@ -185,6 +187,9 @@ Iris 一键安装脚本
 
   # 使用代理加速下载
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | GITHUB_PROXY=https://mirror.ghproxy.com/ bash
+
+  # 安装指定版本
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | VERSION=v0.1.0 bash
 
   # 安装 agent
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
@@ -199,7 +204,7 @@ install_binary() {
 
     info "安装 ${binary_name}..."
 
-    # 构建下载 URL（使用 latest 自动重定向到最新版本）
+    # 构建下载 URL
     local ext=""
     if [[ "$platform" == "windows-"* ]]; then
         ext=".exe"
@@ -208,7 +213,13 @@ install_binary() {
         local archive_name="iris-${platform}.tar.gz"
     fi
 
-    local download_url="${GITHUB_PROXY}https://github.com/${REPO}/releases/latest/download/${archive_name}"
+    local release_path
+    if [ "$VERSION" = "latest" ]; then
+        release_path="releases/latest/download"
+    else
+        release_path="releases/download/${VERSION}"
+    fi
+    local download_url="${GITHUB_PROXY}https://github.com/${REPO}/${release_path}/${archive_name}"
     local tmp_dir=$(mktemp -d)
 
     info "下载 ${archive_name}..."
@@ -242,42 +253,14 @@ install_binary() {
     rm -rf "$tmp_dir"
 
     success "${binary_name} 已安装到 ${INSTALL_DIR}/${binary_name}${ext}"
-}
 
-# 显示使用说明
-show_usage() {
-    cat << EOF
-Iris 一键安装脚本
-
-用法:
-  # 安装 server
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash
-
-  # 安装 agent
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
-
-  # 安装 agent 并自定义显示名称
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 IRIS_HOSTNAME=my-server bash
-
-环境变量:
-  IRIS_SERVER     server 地址（设置此值则安装 agent，否则安装 server）
-  IRIS_HOSTNAME   自定义显示名称（可选，默认使用系统 hostname）
-  VERSION         指定版本号（默认: latest）
-
-说明:
-  Web UI 已嵌入二进制文件，无需额外安装
-
-示例:
-  # 安装最新版 server
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash
-
-  # 安装指定版本
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | VERSION=v0.1.0 bash
-
-  # 安装 agent
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | IRIS_SERVER=http://192.168.1.100:50051 bash
-
-EOF
+    # 显示版本信息
+    if command -v "${binary_name}" &> /dev/null; then
+        local version_output
+        if version_output=$("${binary_name}" --version 2>&1); then
+            info "已安装版本: ${version_output}"
+        fi
+    fi
 }
 
 # 主函数
@@ -299,7 +282,11 @@ main() {
     local platform
     platform=$(detect_platform)
     info "检测到平台: ${platform}"
-    info "从 GitHub Releases 下载最新版本"
+    if [ "$VERSION" = "latest" ]; then
+        info "从 GitHub Releases 下载最新版本"
+    else
+        info "从 GitHub Releases 下载指定版本: ${VERSION}"
+    fi
 
     # 创建安装目录
     if [ ! -d "$INSTALL_DIR" ]; then

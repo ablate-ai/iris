@@ -201,6 +201,11 @@ impl Storage {
         }
     }
 
+    /// 是否已启用持久化
+    pub fn is_persist_enabled(&self) -> bool {
+        self.persist_enabled
+    }
+
     async fn enqueue_metrics(&self, metrics: &MetricsRequest, wait_persist: bool) -> Result<()> {
         let tx_opt = if let Some(tx_lock) = &self.write_tx {
             tx_lock.read().await.clone()

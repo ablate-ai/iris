@@ -4,6 +4,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
 #[command(name = "iris-server")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Iris Server - 监控数据中心服务器", long_about = None)]
 struct Cli {
     /// gRPC 监听地址
