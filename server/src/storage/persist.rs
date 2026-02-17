@@ -20,6 +20,7 @@ const METRICS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metric
 const AGENT_LATEST_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("agent_latest");
 
 /// 持久化存储
+#[derive(Clone)]
 pub struct PersistStorage {
     /// redb 数据库
     db: Arc<Database>,
@@ -30,17 +31,20 @@ impl PersistStorage {
     pub fn new(db_path: &str) -> Self {
         let path = Path::new(db_path);
 
-        // 创建数据库（如果不存在）
-        let db = match Database::create(path) {
-            Ok(db) => {
-                info!("Created/Open redb database at {}", db_path);
-                db
+        // 如果父目录不存在，创建它
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent).expect("Failed to create database directory");
             }
-            Err(e) => {
-                // 如果已存在，尝试打开
-                info!("Database exists, opening: {}", e);
-                Database::open(path).expect("Failed to open database")
-            }
+        }
+
+        // 尝试创建或打开数据库
+        let db = if path.exists() {
+            info!("Opening existing redb database at {}", db_path);
+            Database::open(path).expect("Failed to open database")
+        } else {
+            info!("Creating new redb database at {}", db_path);
+            Database::create(path).expect("Failed to create database")
         };
 
         // 初始化表结构
@@ -61,9 +65,17 @@ impl PersistStorage {
         write_txn.commit().expect("Failed to commit init");
     }
 
-    /// 生成复合键: "agent_id:timestamp"
+    /// 生成复合键: "agent_id\0timestamp"
+    /// 使用 \0 作为分隔符，避免 agent_id 中包含冒号导致解析错误
     fn make_key(agent_id: &str, timestamp: i64) -> String {
-        format!("{}:{}", agent_id, timestamp)
+        format!("{}\0{}", agent_id, timestamp)
+    }
+
+    /// 解析复合键，返回 (agent_id, timestamp)
+    fn parse_key(key: &str) -> Option<(&str, i64)> {
+        let (agent_id, ts_str) = key.split_once('\0')?;
+        let timestamp = ts_str.parse::<i64>().ok()?;
+        Some((agent_id, timestamp))
     }
 
     /// 批量写入指标数据
@@ -91,9 +103,26 @@ impl PersistStorage {
                     let key = Self::make_key(&m.agent_id, m.timestamp);
                     metrics_table.insert(key.as_str(), bytes.as_slice())?;
 
-                    // 更新 agent_latest 表
-                    let timestamp_bytes = m.timestamp.to_be_bytes();
-                    latest_table.insert(m.agent_id.as_str(), timestamp_bytes.as_slice())?;
+                    // 更新 agent_latest 表（只在时间戳更新时写入）
+                    let should_update = match latest_table.get(m.agent_id.as_str())? {
+                        Some(existing) => {
+                            let arr = existing.value();
+                            if arr.len() == 8 {
+                                let existing_ts = i64::from_be_bytes([
+                                    arr[0], arr[1], arr[2], arr[3], arr[4], arr[5], arr[6], arr[7],
+                                ]);
+                                m.timestamp > existing_ts
+                            } else {
+                                true
+                            }
+                        }
+                        None => true,
+                    };
+
+                    if should_update {
+                        let timestamp_bytes = m.timestamp.to_be_bytes();
+                        latest_table.insert(m.agent_id.as_str(), timestamp_bytes.as_slice())?;
+                    }
                 }
             }
 
@@ -121,22 +150,23 @@ impl PersistStorage {
 
             let mut results = Vec::new();
 
-            // 遍历所有条目，筛选匹配的
-            let iter = table.iter()?;
+            // 构造 agent 的 key 前缀范围
+            // 从 "agent_id\0" 开始，到 "agent_id\0\xff..." 结束
+            let start_prefix = format!("{}\0", agent_id);
+            let mut end_prefix = format!("{}\0", agent_id);
+            end_prefix.push('\u{10ffff}'); // Unicode 最大字符
+
+            // 使用 range 查询该 agent 的所有数据
+            let iter = table.range(start_prefix.as_str()..end_prefix.as_str())?;
             for item in iter {
                 let (key, value) = item?;
                 let key_str = key.value();
 
-                // 解析 key: "agent_id:timestamp" (从右边分割最后一个冒号)
-                // 这样 agent_id 可以包含冒号
-                if let Some((id, ts_str)) = key_str.rsplit_once(':') {
-                    if id == agent_id {
-                        if let Ok(ts) = ts_str.parse::<i64>() {
-                            if ts >= start_ts && ts <= end_ts {
-                                let metrics: MetricsRequest = bincode::deserialize(value.value())?;
-                                results.push(metrics);
-                            }
-                        }
+                // 解析并验证 key
+                if let Some((id, ts)) = Self::parse_key(key_str) {
+                    if id == agent_id && ts >= start_ts && ts <= end_ts {
+                        let metrics: MetricsRequest = bincode::deserialize(value.value())?;
+                        results.push(metrics);
                     }
                 }
             }
@@ -174,6 +204,131 @@ impl PersistStorage {
         .await
         .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
     }
+
+    /// 获取所有 agent_id 列表
+    pub async fn get_all_agent_ids(&self) -> Result<Vec<String>> {
+        let db = self.db.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let read_txn = db.begin_read()?;
+            let table = read_txn.open_table(AGENT_LATEST_TABLE)?;
+
+            let mut agent_ids = Vec::new();
+            let iter = table.iter()?;
+            for item in iter {
+                let (key, _) = item?;
+                agent_ids.push(key.value().to_string());
+            }
+
+            debug!("获取到 {} 个 agent_id", agent_ids.len());
+            Ok::<Vec<String>, anyhow::Error>(agent_ids)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
+    }
+
+    /// 删除指定 agent 超过保留数量的旧记录，返回删除数量
+    pub async fn delete_old_records(&self, agent_id: &str, keep_count: usize) -> Result<usize> {
+        let db = self.db.clone();
+        let agent_id = agent_id.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            // 先读取该 agent 的所有 key（按字典序即时间戳排序）
+            let keys: Vec<String> = {
+                let read_txn = db.begin_read()?;
+                let table = read_txn.open_table(METRICS_TABLE)?;
+
+                let start_prefix = format!("{}\0", agent_id);
+                let mut end_prefix = format!("{}\0", agent_id);
+                end_prefix.push('\u{10ffff}');
+
+                let iter = table.range(start_prefix.as_str()..end_prefix.as_str())?;
+                let mut keys = Vec::new();
+                for item in iter {
+                    let (key, _) = item?;
+                    keys.push(key.value().to_string());
+                }
+                keys
+            };
+
+            let total = keys.len();
+            if total <= keep_count {
+                debug!(
+                    "agent {} 共 {} 条记录，保留 {} 条，无需删除",
+                    agent_id, total, keep_count
+                );
+                return Ok(0);
+            }
+
+            // key 按字典序排列，时间戳小的在前，删除前面的旧记录
+            let delete_count = total - keep_count;
+            let keys_to_delete = &keys[..delete_count];
+
+            let write_txn = db.begin_write()?;
+            {
+                let mut table = write_txn.open_table(METRICS_TABLE)?;
+                for key in keys_to_delete {
+                    table.remove(key.as_str())?;
+                }
+            }
+            write_txn.commit()?;
+
+            info!(
+                "agent {} 删除了 {} 条旧记录，保留 {} 条",
+                agent_id, delete_count, keep_count
+            );
+            Ok::<usize, anyhow::Error>(delete_count)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
+    }
+
+    /// 删除指定时间之前的所有记录，返回删除数量
+    pub async fn delete_before_timestamp(&self, before_ts: i64) -> Result<usize> {
+        let db = self.db.clone();
+
+        tokio::task::spawn_blocking(move || {
+            // 先收集需要删除的 key
+            let keys_to_delete: Vec<String> = {
+                let read_txn = db.begin_read()?;
+                let table = read_txn.open_table(METRICS_TABLE)?;
+
+                let mut keys = Vec::new();
+                let iter = table.iter()?;
+                for item in iter {
+                    let (key, _) = item?;
+                    let key_str = key.value();
+                    if let Some((_, ts)) = Self::parse_key(key_str) {
+                        if ts < before_ts {
+                            keys.push(key_str.to_string());
+                        }
+                    }
+                }
+                keys
+            };
+
+            if keys_to_delete.is_empty() {
+                debug!("没有早于 {} 的记录需要删除", before_ts);
+                return Ok(0);
+            }
+
+            let delete_count = keys_to_delete.len();
+            let write_txn = db.begin_write()?;
+            {
+                let mut table = write_txn.open_table(METRICS_TABLE)?;
+                for key in &keys_to_delete {
+                    table.remove(key.as_str())?;
+                }
+            }
+            write_txn.commit()?;
+
+            info!("删除了 {} 条早于 {} 的记录", delete_count, before_ts);
+            Ok::<usize, anyhow::Error>(delete_count)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
+    }
+
 }
 
 #[cfg(test)]
@@ -579,5 +734,125 @@ mod tests {
             .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].timestamp, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_get_all_agent_ids() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+
+        let storage = PersistStorage::new(&db_path);
+
+        // 空数据库
+        let ids = storage.get_all_agent_ids().await.unwrap();
+        assert!(ids.is_empty());
+
+        // 写入多个 agent 的数据
+        let metrics = vec![
+            create_test_metrics("agent-a", 1000),
+            create_test_metrics("agent-b", 2000),
+            create_test_metrics("agent-c", 3000),
+        ];
+        storage.flush_batch(&metrics).await.unwrap();
+
+        let mut ids = storage.get_all_agent_ids().await.unwrap();
+        ids.sort();
+        assert_eq!(ids, vec!["agent-a", "agent-b", "agent-c"]);
+    }
+
+    #[tokio::test]
+    async fn test_delete_old_records() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+
+        let storage = PersistStorage::new(&db_path);
+
+        // 写入 5 条记录
+        let metrics: Vec<_> = (1..=5)
+            .map(|i| create_test_metrics("agent-1", i * 1000))
+            .collect();
+        storage.flush_batch(&metrics).await.unwrap();
+
+        // 保留 2 条，应删除 3 条
+        let deleted = storage.delete_old_records("agent-1", 2).await.unwrap();
+        assert_eq!(deleted, 3);
+
+        // 验证剩余的是最新的 2 条
+        let remaining = storage.query_by_agent("agent-1", 0, 99999).await.unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert_eq!(remaining[0].timestamp, 4000);
+        assert_eq!(remaining[1].timestamp, 5000);
+    }
+
+    #[tokio::test]
+    async fn test_delete_old_records_keep_more_than_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+
+        let storage = PersistStorage::new(&db_path);
+
+        // 写入 3 条记录
+        let metrics: Vec<_> = (1..=3)
+            .map(|i| create_test_metrics("agent-1", i * 1000))
+            .collect();
+        storage.flush_batch(&metrics).await.unwrap();
+
+        // 保留 10 条（超过实际数量），不应删除任何记录
+        let deleted = storage.delete_old_records("agent-1", 10).await.unwrap();
+        assert_eq!(deleted, 0);
+
+        let remaining = storage.query_by_agent("agent-1", 0, 99999).await.unwrap();
+        assert_eq!(remaining.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_delete_before_timestamp() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+
+        let storage = PersistStorage::new(&db_path);
+
+        // 写入多个 agent 的数据
+        let metrics = vec![
+            create_test_metrics("agent-1", 1000),
+            create_test_metrics("agent-1", 2000),
+            create_test_metrics("agent-1", 3000),
+            create_test_metrics("agent-2", 1500),
+            create_test_metrics("agent-2", 2500),
+        ];
+        storage.flush_batch(&metrics).await.unwrap();
+
+        // 删除时间戳 < 2000 的记录（agent-1:1000, agent-2:1500）
+        let deleted = storage.delete_before_timestamp(2000).await.unwrap();
+        assert_eq!(deleted, 2);
+
+        // 验证 agent-1 剩余记录
+        let r1 = storage.query_by_agent("agent-1", 0, 99999).await.unwrap();
+        assert_eq!(r1.len(), 2);
+        assert_eq!(r1[0].timestamp, 2000);
+        assert_eq!(r1[1].timestamp, 3000);
+
+        // 验证 agent-2 剩余记录
+        let r2 = storage.query_by_agent("agent-2", 0, 99999).await.unwrap();
+        assert_eq!(r2.len(), 1);
+        assert_eq!(r2[0].timestamp, 2500);
+    }
+
+    #[tokio::test]
+    async fn test_delete_before_timestamp_no_match() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+
+        let storage = PersistStorage::new(&db_path);
+
+        let metrics = vec![create_test_metrics("agent-1", 5000)];
+        storage.flush_batch(&metrics).await.unwrap();
+
+        // 所有记录都在 1000 之后，不应删除
+        let deleted = storage.delete_before_timestamp(1000).await.unwrap();
+        assert_eq!(deleted, 0);
+
+        let remaining = storage.query_by_agent("agent-1", 0, 99999).await.unwrap();
+        assert_eq!(remaining.len(), 1);
     }
 }
