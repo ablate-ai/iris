@@ -189,7 +189,7 @@ curl "http://localhost:50052/api/agents/agent-hostname/metrics/history?limit=100
 - **Docker**: 容器化部署
 - **nohup**: 快速临时方案
 
-详细部署指南请查看 [deploy/DEPLOY.md](deploy/DEPLOY.md)
+使用一键安装脚本会自动配置 systemd 服务。更多安装选项请查看 [安装文档](docs/INSTALL.md)
 
 ## 开发
 
