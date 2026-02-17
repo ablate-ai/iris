@@ -74,10 +74,6 @@ curl -fsSL https://raw.githubusercontent.com/ablate-ai/iris/main/uninstall.sh | 
 
 如果不使用一键安装，也可以手动编译运行：
 
-项目提供两种编译方式：
-
-**方式一：编译独立二进制（推荐）**
-
 ```bash
 # 编译 Server（中心服务器）
 cargo build --release --bin iris-server
@@ -86,21 +82,10 @@ cargo build --release --bin iris-server
 cargo build --release --bin iris-agent
 ```
 
-**方式二：编译统一二进制**
-
-```bash
-# 编译包含 Agent 和 Server 的统一二进制
-cargo build --release --bin iris
-```
-
 #### 手动运行 Server（中心服务器）
 
 ```bash
-# 使用独立二进制
 ./target/release/iris-server --addr 0.0.0.0:50051
-
-# 或使用统一二进制
-./target/release/iris server --addr 0.0.0.0:50051
 ```
 
 **Server 启动后提供**：
@@ -111,16 +96,12 @@ cargo build --release --bin iris
 #### 手动运行 Agent（被监控服务器）
 
 ```bash
-# 使用独立二进制
 ./target/release/iris-agent --server http://your-server:50051 --interval 10
-
-# 或使用统一二进制
-./target/release/iris agent --server http://your-server:50051 --interval 10
 ```
 
 ## 命令行参数
 
-### iris-server（独立二进制）
+### iris-server
 
 ```bash
 iris-server [OPTIONS]
@@ -132,7 +113,7 @@ Options:
 注意：HTTP API 端口为 gRPC 端口 + 1
 ```
 
-### iris-agent（独立二进制）
+### iris-agent
 
 ```bash
 iris-agent [OPTIONS]
@@ -147,7 +128,9 @@ Options:
 
 ```
 iris/
-├── src/main.rs           # 主入口
+├── src/
+│   ├── agent_main.rs     # Agent 二进制入口
+│   └── server_main.rs    # Server 二进制入口
 ├── proto/                # gRPC 协议定义
 ├── agent/                # Agent 模块
 │   ├── lib.rs

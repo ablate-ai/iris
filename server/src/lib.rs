@@ -4,6 +4,8 @@ use common::proto::{
     HeartbeatRequest, HeartbeatResponse, MetricsRequest, MetricsResponse, StreamResponse,
 };
 use common::utils::current_timestamp_ms;
+use std::path::Path;
+use tokio::signal;
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 use tonic::{transport::Server, Request, Response, Status};
@@ -19,17 +21,66 @@ pub struct ProbeServer {
 }
 
 impl ProbeServer {
-    pub fn new() -> Self {
-        let (tx, _) = broadcast::channel(1000);
-        Self {
-            storage: storage::Storage::new(),
-            broadcast: tx,
+    pub fn new() -> Result<Self> {
+        // 检查生产环境数据目录是否存在
+        let persist_enabled = std::path::Path::new("/var/lib/iris").exists();
+
+        if persist_enabled {
+            info!("生产环境模式：数据将持久化到 /var/lib/iris/metrics.redb");
+            Self::with_db_path("/var/lib/iris/metrics.redb")
+        } else {
+            info!("开发环境模式：数据仅保存在内存中（不持久化）");
+            Self::memory_only()
         }
+    }
+
+    /// 使用指定数据库路径创建 ProbeServer（持久化模式）
+    pub fn with_db_path(db_path: &str) -> Result<Self> {
+        // 确保 data 目录存在
+        if let Some(parent) = Path::new(db_path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let (tx, _) = broadcast::channel(1000);
+
+        // 使用配置创建 Storage（持久化）
+        let config = storage::StorageConfig {
+            db_path: Some(db_path.to_string()),
+            ..Default::default()
+        };
+        let storage = storage::Storage::with_config(config);
+
+        info!("Storage initialized with db_path: {}", db_path);
+
+        Ok(Self {
+            storage,
+            broadcast: tx,
+        })
+    }
+
+    /// 创建仅内存模式的 ProbeServer（不持久化）
+    pub fn memory_only() -> Result<Self> {
+        let (tx, _) = broadcast::channel(1000);
+
+        // 使用配置创建 Storage（仅内存）
+        let config = storage::StorageConfig {
+            db_path: None,
+            ..Default::default()
+        };
+        let storage = storage::Storage::with_config(config);
+
+        info!("Storage initialized in memory-only mode");
+
+        Ok(Self {
+            storage,
+            broadcast: tx,
+        })
     }
 
     pub async fn run(addr: String) -> Result<()> {
         let grpc_addr: std::net::SocketAddr = addr.parse()?;
-        let server = ProbeServer::new();
+        let server = ProbeServer::new()?;
+        let storage_for_shutdown = server.storage.clone();
         let storage = server.storage.clone();
         let broadcast = server.broadcast.clone();
 
@@ -52,11 +103,25 @@ impl ProbeServer {
 
         info!("gRPC Server 启动在 {}", grpc_addr);
 
+        // 设置优雅关闭
+        let shutdown_signal = async {
+            signal::ctrl_c()
+                .await
+                .expect("无法监听 Ctrl+C 信号");
+            info!("收到关闭信号，正在优雅关闭...");
+        };
+
+        // 同时监听 gRPC 服务和关闭信号
         Server::builder()
             .add_service(ProbeServiceServer::new(server))
-            .serve(grpc_addr)
+            .serve_with_shutdown(grpc_addr, shutdown_signal)
             .await?;
 
+        // 关闭 Storage，确保数据全部写入
+        info!("正在关闭 Storage...");
+        storage_for_shutdown.shutdown().await?;
+
+        info!("服务器已优雅关闭");
         Ok(())
     }
 }

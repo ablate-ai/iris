@@ -69,6 +69,7 @@ setup_systemd_service() {
     local binary_name=$2
     local exec_args=$3
     local env_vars=$4
+    local working_dir=$5
 
     if ! has_systemd; then
         return 1
@@ -88,6 +89,13 @@ setup_systemd_service() {
     if [ -n "$prefix" ]; then
         warning "需要 ${prefix} 权限创建 systemd 服务"
     fi
+
+    # 构建 WorkingDirectory 行（如果提供）
+    local working_dir_line=""
+    if [ -n "$working_dir" ]; then
+        working_dir_line="WorkingDirectory=${working_dir}"
+    fi
+
     ${prefix} tee "/etc/systemd/system/${service_name}.service" > /dev/null <<EOF
 [Unit]
 Description=Iris ${binary_name}
@@ -97,6 +105,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=${INSTALL_DIR}/${binary_name} ${exec_args}
+${working_dir_line}
 ${env_vars}
 Restart=always
 RestartSec=10
@@ -312,7 +321,7 @@ main() {
         fi
 
         # 尝试使用 systemd 启动
-        if ! setup_systemd_service "iris-agent" "iris-agent" "--server ${IRIS_SERVER}" "$env_vars"; then
+        if ! setup_systemd_service "iris-agent" "iris-agent" "--server ${IRIS_SERVER}" "$env_vars" ""; then
             # 没有 systemd 或没有权限，显示手动运行提示
             echo ""
             warning "无法创建 systemd 服务，请手动启动 agent:"
@@ -328,8 +337,37 @@ main() {
         info "未设置 IRIS_SERVER，安装 server 模式"
         install_binary "iris-server" "$platform"
 
+        # 尝试创建数据目录（生产环境持久化）
+        local data_dir="/var/lib/iris"
+        local has_data_dir=false
+        if can_sudo_or_root; then
+            local prefix=$(get_prefix_cmd)
+            info "创建数据目录: ${data_dir}"
+            if ${prefix} mkdir -p "$data_dir" 2>/dev/null; then
+                # 如果不是 root，设置目录权限给当前用户
+                if [ "$(id -u)" != "0" ]; then
+                    ${prefix} chown "$(whoami)" "$data_dir" 2>/dev/null || true
+                fi
+                success "数据将持久化到 ${data_dir}"
+                has_data_dir=true
+            else
+                warning "无法创建 ${data_dir}"
+            fi
+        else
+            warning "无 sudo 权限，无法创建 ${data_dir}"
+        fi
+
+        if [ "$has_data_dir" = false ]; then
+            warning "数据不会持久化（仅内存模式），重启后数据将丢失"
+        fi
+
         # 尝试使用 systemd 启动
-        if ! setup_systemd_service "iris-server" "iris-server" "--addr 0.0.0.0:50051" ""; then
+        local working_dir=""
+        if [ "$has_data_dir" = true ]; then
+            working_dir="/var/lib/iris"
+        fi
+
+        if ! setup_systemd_service "iris-server" "iris-server" "--addr 0.0.0.0:50051" "" "$working_dir"; then
             # 没有 systemd 或没有权限，显示手动运行提示
             echo ""
             warning "无法创建 systemd 服务，请手动启动 server:"

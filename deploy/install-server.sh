@@ -21,14 +21,10 @@ fi
 read -p "请输入 gRPC 监听地址 (默认: 0.0.0.0:50051): " ADDR
 ADDR=${ADDR:-0.0.0.0:50051}
 
-# 获取 Web 目录
-read -p "请输入 Web UI 目录 (默认: /opt/iris/web): " WEB_DIR_INPUT
-WEB_DIR=${WEB_DIR_INPUT:-/opt/iris/web}
-
 echo -e "\n${YELLOW}配置信息:${NC}"
 echo "  gRPC 地址: $ADDR"
 echo "  HTTP API: ${ADDR%:*}:$((${ADDR##*:}+1))"
-echo "  Web UI: $WEB_DIR"
+echo "  Web UI: 已嵌入二进制文件"
 read -p "确认部署? (y/n): " CONFIRM
 
 if [ "$CONFIRM" != "y" ]; then
@@ -50,15 +46,7 @@ echo -e "${GREEN}[2/5] 复制二进制文件...${NC}"
 mkdir -p /opt/iris
 cp target/release/iris-server /opt/iris/
 chmod +x /opt/iris/iris-server
-
-# 复制 Web UI 文件
-echo -e "${GREEN}[2.5/5] 复制 Web UI 文件...${NC}"
-if [ -d "web" ]; then
-    cp -r web /opt/iris/
-    echo "  Web UI 已复制到 $WEB_DIR"
-else
-    echo "  警告: web 目录不存在，跳过"
-fi
+echo "  二进制文件已复制（Web UI 已嵌入）"
 
 # 创建数据目录
 echo -e "${GREEN}[3/5] 创建数据目录...${NC}"
@@ -78,7 +66,7 @@ Type=simple
 User=iris
 Group=iris
 WorkingDirectory=/opt/iris
-ExecStart=/opt/iris/iris-server --addr $ADDR --web-dir $WEB_DIR
+ExecStart=/opt/iris/iris-server --addr $ADDR
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -89,7 +77,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/iris /opt/iris/web
+ReadWritePaths=/var/lib/iris
 
 # 资源限制
 LimitNOFILE=65535

@@ -122,6 +122,47 @@ remove_binary() {
     fi
 }
 
+# 删除 Server 数据
+remove_server_data() {
+    local data_dir="/var/lib/iris"
+
+    if [ ! -d "$data_dir" ]; then
+        info "数据目录不存在: ${data_dir}"
+        return 0
+    fi
+
+    # 检查是否有权限
+    if ! can_sudo_or_root; then
+        warning "没有权限删除数据目录 ${data_dir}，请手动删除"
+        return 1
+    fi
+
+    # 询问是否删除数据
+    echo ""
+    warning "数据目录: ${data_dir}"
+    warning "包含数据库文件: metrics.redb"
+    echo -e "${RED}警告: 删除后所有监控数据将永久丢失！${NC}"
+    echo ""
+    read -p "是否删除数据? (输入 'yes' 确认): " confirm
+
+    if [ "$confirm" = "yes" ]; then
+        # 再次确认
+        echo ""
+        read -p "再次确认: 输入 'DELETE' 以删除所有数据: " double_confirm
+
+        if [ "$double_confirm" = "DELETE" ]; then
+            local prefix=$(get_prefix_cmd)
+            ${prefix} rm -rf "$data_dir"
+            success "已删除数据目录: ${data_dir}"
+        else
+            warning "取消删除数据"
+            info "数据目录保留: ${data_dir}"
+        fi
+    else
+        info "数据目录保留: ${data_dir}"
+    fi
+}
+
 # 检测已安装的组件
 detect_installed() {
     local components=()
@@ -216,6 +257,11 @@ main() {
         # Windows 平台的 .exe 文件
         if [ -f "${INSTALL_DIR}/${binary_name}.exe" ]; then
             remove_binary "${binary_name}.exe"
+        fi
+
+        # 3. 如果是 server，询问是否删除数据
+        if [ "$component" = "server" ]; then
+            remove_server_data
         fi
     done
 
