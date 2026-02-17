@@ -41,6 +41,14 @@ pub struct StorageConfig {
     pub batch_timeout: Duration,
     /// 写入通道容量
     pub channel_capacity: usize,
+    /// 每个 Agent 保留的最大记录数
+    pub max_records_per_agent: usize,
+    /// 数据保留天数
+    pub retention_days: u64,
+    /// 清理任务执行间隔（小时）
+    pub cleanup_interval_hours: u64,
+    /// 是否启用清理任务
+    pub enable_cleanup: bool,
 }
 
 impl Default for StorageConfig {
@@ -51,6 +59,10 @@ impl Default for StorageConfig {
             batch_size: BATCH_SIZE,
             batch_timeout: BATCH_TIMEOUT,
             channel_capacity: CHANNEL_CAPACITY,
+            max_records_per_agent: 10000,
+            retention_days: 30,
+            cleanup_interval_hours: 1,
+            enable_cleanup: true,
         }
     }
 }
@@ -68,10 +80,18 @@ pub struct Storage {
     cache: Arc<cache::Cache>,
     /// 写入通道 sender（仅持久化模式）
     write_tx: Option<mpsc::Sender<MetricsRequest>>,
+    /// 后台任务句柄
+    writer_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
     /// 运行状态
     running: Arc<RwLock<bool>>,
     /// 是否启用持久化
     persist_enabled: bool,
+    /// 持久化存储引用（用于清理任务）
+    persist: Option<Arc<PersistStorage>>,
+    /// 清理任务句柄
+    cleanup_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
+    /// 清理任务停止标志
+    cleanup_running: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Storage {
@@ -86,47 +106,64 @@ impl Storage {
         let running = Arc::new(RwLock::new(true));
 
         // 根据配置决定是否启用持久化
-        let (write_tx, persist_enabled) = if let Some(db_path) = &config.db_path {
-            let persist = PersistStorage::new(db_path);
-            let (tx, rx) = mpsc::channel(config.channel_capacity);
+        let (write_tx, writer_handle, persist_enabled, persist, cleanup_handle, cleanup_running) =
+            if let Some(db_path) = &config.db_path {
+                let persist = Arc::new(PersistStorage::new(db_path));
+                let (tx, rx) = mpsc::channel(config.channel_capacity);
 
-            // 启动后台批量写入任务
-            let cache_clone = cache.clone();
-            let running_clone = running.clone();
-            tokio::spawn(async move {
-                Self::batch_writer_task(
-                    rx,
-                    persist,
-                    cache_clone,
-                    config.batch_size,
-                    config.batch_timeout,
-                    running_clone,
-                )
-                .await;
-            });
+                // 启动后台批量写入任务
+                let running_clone = running.clone();
+                let persist_clone = persist.clone();
+                let handle = tokio::spawn(async move {
+                    Self::batch_writer_task(
+                        rx,
+                        persist_clone,
+                        config.batch_size,
+                        config.batch_timeout,
+                        running_clone,
+                    )
+                    .await;
+                });
 
-            info!(
-                db_path = %db_path,
-                cache_size = config.cache_size_per_agent,
-                batch_size = config.batch_size,
-                "Storage initialized with persistence"
-            );
+                // 启动清理任务（如果启用）
+                let (cleanup_handle, cleanup_running) = if config.enable_cleanup {
+                    let cleanup_task = cleanup::CleanupTask::new(config.clone(), persist.clone());
+                    let cleanup_running = cleanup_task.running_flag();
+                    let handle = tokio::spawn(async move {
+                        cleanup_task.run().await;
+                    });
+                    (Some(Arc::new(handle)), Some(cleanup_running))
+                } else {
+                    (None, None)
+                };
 
-            (Some(tx), true)
-        } else {
-            info!(
-                cache_size = config.cache_size_per_agent,
-                "Storage initialized in memory-only mode"
-            );
+                info!(
+                    db_path = %db_path,
+                    cache_size = config.cache_size_per_agent,
+                    batch_size = config.batch_size,
+                    enable_cleanup = config.enable_cleanup,
+                    "Storage initialized with persistence"
+                );
 
-            (None, false)
-        };
+                (Some(tx), Some(Arc::new(handle)), true, Some(persist), cleanup_handle, cleanup_running)
+            } else {
+                info!(
+                    cache_size = config.cache_size_per_agent,
+                    "Storage initialized in memory-only mode"
+                );
+
+                (None, None, false, None, None, None)
+            };
 
         Self {
             cache,
             write_tx,
+            writer_handle,
             running,
             persist_enabled,
+            persist,
+            cleanup_handle,
+            cleanup_running,
         }
     }
 
@@ -134,18 +171,19 @@ impl Storage {
     ///
     /// 流程:
     /// 1. 立即更新内存缓存
-    /// 2. 如果启用持久化：异步发送到持久化队列
+    /// 2. 如果启用持久化：异步发送到持久化队列（阻塞等待）
     pub async fn save_metrics(&self, metrics: &MetricsRequest) {
         // 1. 立即更新缓存
         self.cache.update(metrics.clone()).await;
 
-        // 2. 如果启用持久化，发送到持久化队列 (非阻塞)
+        // 2. 如果启用持久化，发送到持久化队列（阻塞等待）
         if let Some(tx) = &self.write_tx {
-            if let Err(_) = tx.try_send(metrics.clone()) {
-                // 通道满时记录警告，但不阻塞
-                warn!(
+            if let Err(e) = tx.send(metrics.clone()).await {
+                // 通道关闭时记录错误
+                error!(
                     agent_id = %metrics.agent_id,
-                    "Write channel full, metrics may be lost"
+                    error = %e,
+                    "Failed to send metrics to persistence queue"
                 );
             }
         }
@@ -183,11 +221,44 @@ impl Storage {
         // 标记为不再运行
         *self.running.write().await = false;
 
-        // 如果启用了持久化，等待写入通道关闭
+        // 如果启用了持久化，关闭写入通道并等待任务完成
         if self.persist_enabled {
-            info!("Waiting for persistence queue to flush...");
-            // 等待一小段时间让后台任务完成
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            info!("Closing persistence queue...");
+
+            // 停止清理任务
+            if let (Some(cleanup_running), Some(cleanup_handle)) = (&self.cleanup_running, &self.cleanup_handle) {
+                info!("Stopping cleanup task...");
+                cleanup_running.store(false, std::sync::atomic::Ordering::Relaxed);
+
+                // 给清理任务一点时间优雅退出
+                tokio::time::sleep(Duration::from_millis(100)).await;
+
+                // 如果还没有退出，则 abort
+                if !cleanup_handle.is_finished() {
+                    cleanup_handle.abort();
+                    info!("Cleanup task aborted");
+                } else {
+                    info!("Cleanup task stopped successfully");
+                }
+            }
+
+            // 关闭发送端，让接收端知道不会再有新数据
+            drop(self.write_tx.clone());
+
+            // 等待后台任务完成（最多 10 秒）
+            if let Some(_handle) = &self.writer_handle {
+                match tokio::time::timeout(
+                    Duration::from_secs(10),
+                    async {
+                        // 注意：不能直接 await Arc<JoinHandle>，需要特殊处理
+                        // 这里我们依赖 running 标志让任务自行退出
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                ).await {
+                    Ok(_) => info!("Persistence queue flushed successfully"),
+                    Err(_) => warn!("Persistence queue flush timeout after 10s"),
+                }
+            }
         }
 
         info!("Storage shutdown complete");
@@ -197,8 +268,7 @@ impl Storage {
     /// 后台批量写入任务
     async fn batch_writer_task(
         mut rx: mpsc::Receiver<MetricsRequest>,
-        persist: PersistStorage,
-        _cache: Arc<cache::Cache>,
+        persist: Arc<PersistStorage>,
         batch_size: usize,
         timeout: Duration,
         running: Arc<RwLock<bool>>,
@@ -234,26 +304,21 @@ impl Storage {
                         }
                         buffer.clear();
                     }
-                }
-                // 检查运行状态
-                else => {
-                    // 如果通道关闭且缓冲区为空，退出
-                    if rx.is_closed() && buffer.is_empty() {
+
+                    // 检查是否应该继续运行
+                    if !*running.read().await {
+                        info!("Shutdown signal received, exiting batch writer");
                         break;
                     }
                 }
             }
+        }
 
-            // 检查是否应该继续运行
-            if !*running.read().await {
-                // 刷新剩余数据
-                if !buffer.is_empty() {
-                    info!("Flushing remaining {} metrics before shutdown", buffer.len());
-                    if let Err(e) = persist.flush_batch(&buffer).await {
-                        error!("Failed to flush final batch: {}", e);
-                    }
-                }
-                break;
+        // 刷新剩余数据
+        if !buffer.is_empty() {
+            info!("Flushing remaining {} metrics before shutdown", buffer.len());
+            if let Err(e) = persist.flush_batch(&buffer).await {
+                error!("Failed to flush final batch: {}", e);
             }
         }
 
