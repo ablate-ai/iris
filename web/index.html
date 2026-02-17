@@ -1322,7 +1322,7 @@
             const [error, setError] = useState(null);
             const [selectedAgent, setSelectedAgent] = useState(null);
             const [history, setHistory] = useState([]);
-            const [networkHistory, setNetworkHistory] = useState(new Map());
+            const [agentHistories, setAgentHistories] = useState(new Map()); // 存储每个 agent 的历史数据
             const eventSourceRef = useRef(null);
 
             const updateAgent = useCallback((metrics) => {
@@ -1356,11 +1356,26 @@
                         prevSpeed = prevAgent.network_speed || { upload: 0, download: 0 };
                     }
 
-                    newAgents.set(agentId, {
+                    const updatedMetrics = {
                         ...metrics,
                         network_speed: networkSpeed,
                         prev_network_speed: prevSpeed
+                    };
+
+                    newAgents.set(agentId, updatedMetrics);
+
+                    // 同时更新该 agent 的历史数据（追加新数据）
+                    setAgentHistories(prevHistories => {
+                        const newHistories = new Map(prevHistories);
+                        const agentHistory = newHistories.get(agentId) || [];
+
+                        // 追加新数据，保持最新 100 条
+                        const updatedHistory = [...agentHistory, updatedMetrics].slice(-100);
+                        newHistories.set(agentId, updatedHistory);
+
+                        return newHistories;
                     });
+
                     return newAgents;
                 });
             }, []);
@@ -1420,14 +1435,29 @@
 
             const handleAgentClick = async (agent) => {
                 setSelectedAgent(agent.agent_id);  // 只保存 ID，Modal 会从 agents Map 中实时获取
-                try {
-                    const historyRes = await fetch(`/api/agents/${agent.agent_id}/metrics/history?limit=20`);
-                    const historyData = await historyRes.json();
-                    if (historyData.success) {
-                        setHistory(historyData.data);
+
+                // 检查是否已经有缓存的历史数据
+                const cachedHistory = agentHistories.get(agent.agent_id);
+                if (cachedHistory && cachedHistory.length > 0) {
+                    // 使用缓存的历史数据（包含实时更新）
+                    setHistory(cachedHistory);
+                } else {
+                    // 首次打开，从服务器加载历史数据
+                    try {
+                        const historyRes = await fetch(`/api/agents/${agent.agent_id}/metrics/history?limit=100`);
+                        const historyData = await historyRes.json();
+                        if (historyData.success) {
+                            setHistory(historyData.data);
+                            // 初始化该 agent 的历史数据缓存
+                            setAgentHistories(prev => {
+                                const newHistories = new Map(prev);
+                                newHistories.set(agent.agent_id, historyData.data);
+                                return newHistories;
+                            });
+                        }
+                    } catch (err) {
+                        console.error('获取历史数据失败:', err);
                     }
-                } catch (err) {
-                    console.error('获取历史数据失败:', err);
                 }
             };
 
@@ -1483,7 +1513,7 @@
                     {selectedAgent && (
                         <AgentModal
                             agentId={selectedAgent}
-                            history={history}
+                            history={agentHistories.get(selectedAgent) || history}
                             agents={agents}
                             onClose={() => setSelectedAgent(null)}
                         />
