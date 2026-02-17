@@ -101,7 +101,6 @@ mod tests {
                     errors_in: 0,
                     errors_out: 0,
                 }),
-                processes: vec![],
                 system_info: None,
                 agent_metrics: None,
             }),

@@ -2,174 +2,72 @@
 
 ## 概述
 
-基于 redb 的嵌入式数据持久化方案，用于存储 Agent 监控指标数据。
+Iris Server 采用“内存缓存 + redb 持久化 + 后台清理”三层方案。
 
-## 架构设计
+## 数据模型
 
-### 数据模型
+redb 中包含两张表：
 
-```
-┌─────────────────────────────────────────┐
-│           redb Database                 │
-├─────────────────────────────────────────┤
-│  Table: metrics                         │
-│  Key:   {agent_id}:{timestamp}          │
-│  Value: MetricsRequest (bincode)        │
-├─────────────────────────────────────────┤
-│  Table: agent_latest                    │
-│  Key:   {agent_id}                      │
-│  Value: timestamp (最新记录的时间戳)      │
-└─────────────────────────────────────────┘
-```
+1. `metrics`
+- Key: `agent_id\0timestamp(20位补零)\0nonce`
+- Value: `MetricsRequest` 的 bincode 序列化字节
 
-### 存储层架构
+2. `agent_latest`
+- Key: `agent_id`
+- Value: 最新时间戳（`i64` 大端字节）
 
-```
-┌──────────────────────────────────────────────┐
-│              Storage Layer                   │
-├──────────────────────────────────────────────┤
-│  内存缓存 (HashMap)                           │
-│  - 最新 100 条数据（快速查询）                 │
-│  - agent_id -> latest metrics               │
-├──────────────────────────────────────────────┤
-│  写入队列 (mpsc channel)                      │
-│  - 异步批量写入                               │
-│  - 每 5 秒或 50 条触发持久化                   │
-├──────────────────────────────────────────────┤
-│  redb Database                               │
-│  - 持久化存储                                 │
-│  - 历史数据查询                               │
-└──────────────────────────────────────────────┘
-```
+说明：当前实现兼容读取旧 key 格式 `agent_id:timestamp`。
 
-## 核心流程
+## 存储层结构
 
-### 写入流程
+1. 内存缓存（`cache.rs`）
+- 每个 Agent 默认保留 100 条
+- 提供快速读取最新数据/短历史
 
-```
-收到指标数据
-    ↓
-更新内存缓存（立即）
-    ↓
-发送到写入队列
-    ↓
-后台任务批量写入 redb
-    ↓
-定期清理旧数据
-```
+2. 异步写入队列（`mod.rs`）
+- `mpsc` 通道默认容量 1000
+- 聚合条件：50 条或 5 秒触发批量落盘
 
-### 查询流程
+3. 持久化层（`persist.rs`）
+- redb 事务写入
+- 支持按 Agent 查询历史与最新数据
 
-```
-查询最新数据 → 从内存缓存读取（快）
-查询历史数据 → 从 redb 读取（慢但完整）
-```
+4. 清理任务（`cleanup.rs`）
+- 默认每 6 小时执行
+- 默认按数量清理（每 Agent 最大 604,800 条）
+- `retention_days` 默认 `0`（不按时间删除）
 
-## Key 设计方案
+## 查询策略
 
-### 方案 A：字符串 Key（推荐）
+1. 最新数据查询：优先内存缓存，缓存未命中再读持久化。
+2. 历史查询：
+- 仅内存模式：从缓存返回。
+- 持久化模式：优先返回持久化历史，避免缓存窗口导致截断。
+
+## 默认配置（`StorageConfig::default`）
 
 ```rust
-// Key: "agent1:1234567890000"
-// 优点：可读性好，范围查询方便
-// 缺点：占用空间稍大
-```
-
-### 方案 B：二进制 Key（性能优先）
-
-```rust
-// Key: [agent_id_hash(8字节) + timestamp(8字节)]
-// 优点：空间小，性能好
-// 缺点：不可读，调试困难
-```
-
-## 数据清理策略
-
-```
-定期任务（每小时）
-    ↓
-扫描所有 agent
-    ↓
-每个 agent 保留最近 1000 条
-    ↓
-删除超过 7 天的旧数据
-```
-
-## 依赖
-
-```toml
-[dependencies]
-redb = "2.1"
-bincode = "1.3"  # 二进制序列化（比 JSON 快且小）
-# 或者继续用 serde_json（可读性好）
+StorageConfig {
+    db_path: None,
+    cache_size_per_agent: 100,
+    batch_size: 50,
+    batch_timeout: Duration::from_secs(5),
+    channel_capacity: 1000,
+    max_records_per_agent: 604_800,
+    retention_days: 0,
+    cleanup_interval_hours: 6,
+    enable_cleanup: true,
+}
 ```
 
 ## 模块结构
 
+```text
+server/src/storage/
+├── mod.rs
+├── cache.rs
+├── persist.rs
+├── cleanup.rs
+├── integration_tests.rs
+└── performance_tests.rs
 ```
-server/src/
-├── storage/
-│   ├── mod.rs          # Storage 主结构
-│   ├── cache.rs        # 内存缓存层
-│   ├── persist.rs      # redb 持久化层
-│   └── cleanup.rs      # 数据清理任务
-└── lib.rs
-```
-
-## 配置参数
-
-```rust
-pub struct StorageConfig {
-    pub data_path: String,           // "./data/metrics.redb"
-    pub cache_size: usize,            // 100 (每个 agent)
-    pub batch_size: usize,            // 50 条
-    pub batch_interval_secs: u64,     // 5 秒
-    pub retention_days: u64,          // 7 天
-    pub max_records_per_agent: usize, // 1000 条
-}
-```
-
-## 性能优化点
-
-1. **批量写入**：累积 50 条或 5 秒后批量提交
-2. **内存缓存**：最新数据直接从内存读取
-3. **异步写入**：不阻塞主流程
-4. **索引优化**：agent_latest 表快速查询最新数据
-5. **压缩存储**：使用 bincode 而非 JSON
-
-## 实现优先级
-
-### Phase 1（核心功能）
-- [ ] redb 基础读写
-- [ ] 内存缓存
-- [ ] 异步批量写入
-
-### Phase 2（优化）
-- [ ] 数据清理任务
-- [ ] 性能监控
-
-### Phase 3（可选）
-- [ ] 数据压缩
-- [ ] 备份恢复
-
-## 架构优势
-
-- **性能好**：内存缓存 + 批量写入
-- **数据安全**：redb ACID 保证
-- **易维护**：单文件数据库，无外部依赖
-- **可扩展**：支持后续添加更多表和索引
-
-## 技术选型对比
-
-| 方案 | 读性能 | 写性能 | 编译速度 | 依赖 |
-|------|--------|--------|----------|------|
-| redb | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 纯 Rust |
-| fjall | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | 纯 Rust |
-| rocksdb | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐ | C++ |
-| JSON 文件 | ⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐⭐ | 无 |
-
-选择 redb 的原因：
-- 纯 Rust 实现，编译快
-- 性能足够好
-- ACID 事务保证
-- 维护活跃

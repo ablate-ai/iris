@@ -657,13 +657,6 @@ mod tests {
                     errors_in: 0,
                     errors_out: 0,
                 }),
-                processes: vec![ProcessMetrics {
-                    pid: 1234,
-                    name: "test-process".to_string(),
-                    cpu_usage: 10.0,
-                    memory: 100_000_000,
-                    status: "Running".to_string(),
-                }],
                 system_info: Some(SystemInfo {
                     os_name: "Linux".to_string(),
                     os_version: "5.15.0".to_string(),

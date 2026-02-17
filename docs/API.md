@@ -11,7 +11,7 @@ Iris 提供 RESTful HTTP API 用于查询监控数据。
 
 ## 通用响应格式
 
-所有 API 响应都遵循以下格式：
+除 `GET /api`（信息端点）与 `GET /api/stream`（SSE）外，业务 API 响应使用以下格式：
 
 ```json
 {
@@ -21,7 +21,7 @@ Iris 提供 RESTful HTTP API 用于查询监控数据。
 }
 ```
 
-错误响应：
+典型错误响应：
 
 ```json
 {
@@ -30,6 +30,8 @@ Iris 提供 RESTful HTTP API 用于查询监控数据。
   "message": "错误信息"
 }
 ```
+
+说明：当前实现中部分错误场景会直接返回 HTTP 状态码（如 `404`），不保证返回 JSON body。
 
 ## API 端点
 
@@ -40,7 +42,7 @@ Iris 提供 RESTful HTTP API 用于查询监控数据。
 **请求**
 
 ```
-GET /
+GET /api
 ```
 
 **响应示例**
@@ -50,6 +52,7 @@ GET /
   "name": "Iris API",
   "version": "0.1.0",
   "endpoints": [
+    "GET /api/stream (SSE)",
     "GET /api/agents",
     "GET /api/agents/:id/metrics",
     "GET /api/agents/:id/metrics/history?limit=100"
@@ -59,7 +62,25 @@ GET /
 
 ---
 
-### 2. 获取所有 Agent 列表
+### 2. SSE 实时流
+
+通过 Server-Sent Events (SSE) 推送实时指标。
+
+**请求**
+
+```
+GET /api/stream
+```
+
+**响应说明**
+
+- `Content-Type`: `text/event-stream`
+- 每条事件的 `data` 为一条 `MetricsRequest` JSON
+- 服务端会定期发送 keep-alive 注释，避免连接被中间层关闭
+
+---
+
+### 3. 获取所有 Agent 列表
 
 获取所有已连接的 Agent 信息。
 
@@ -98,7 +119,7 @@ GET /api/agents
 
 ---
 
-### 3. 获取指定 Agent 的最新指标
+### 4. 获取指定 Agent 的最新指标
 
 获取指定 Agent 的最新一次上报的完整指标数据。
 
@@ -157,16 +178,7 @@ GET /api/agents/:id/metrics
         "packets_recv": 150000,
         "errors_in": 0,
         "errors_out": 0
-      },
-      "processes": [
-        {
-          "pid": 1234,
-          "name": "nginx",
-          "cpu_usage": 5.2,
-          "memory": 104857600,
-          "status": "Running"
-        }
-      ]
+      }
     }
   },
   "message": null
@@ -179,7 +191,7 @@ GET /api/agents/:id/metrics
 
 ---
 
-### 4. 获取指定 Agent 的历史指标
+### 5. 获取指定 Agent 的历史指标
 
 获取指定 Agent 的历史指标数据。
 
@@ -195,7 +207,7 @@ GET /api/agents/:id/metrics/history?limit=100
 
 **查询参数**
 
-- `limit`: 返回的记录数量（默认 100，最大 1000）
+- `limit`: 返回的记录数量（默认 100）
 
 **响应示例**
 
@@ -238,6 +250,9 @@ GET /api/agents/:id/metrics/history?limit=100
 ```bash
 # 获取所有 Agent
 curl http://localhost:50052/api/agents
+
+# SSE 实时订阅
+curl -N http://localhost:50052/api/stream
 
 # 获取指定 Agent 的最新指标
 curl http://localhost:50052/api/agents/agent-server01/metrics
@@ -332,18 +347,6 @@ print(f"CPU: {metrics['system']['cpu']['usage_percent']}%")
 | errors_in | uint64 | 接收错误数 |
 | errors_out | uint64 | 发送错误数 |
 
-### 进程指标 (ProcessMetrics)
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| pid | int | 进程 ID |
-| name | string | 进程名 |
-| cpu_usage | float | CPU 使用率（%） |
-| memory | uint64 | 内存使用（字节） |
-| status | string | 进程状态 |
-
----
-
 ## 错误码
 
 | HTTP 状态码 | 说明 |
@@ -356,7 +359,9 @@ print(f"CPU: {metrics['system']['cpu']['usage_percent']}%")
 
 ## 注意事项
 
-1. **数据保留**: 当前使用内存存储，每个 Agent 最多保留最近 1000 条记录
+1. **数据保留**:
+   - 内存缓存每个 Agent 默认 100 条
+   - 持久化启用时默认按数量清理，每个 Agent 最多约 604,800 条
 2. **时间戳**: 所有时间戳均为 Unix 时间戳（毫秒）
 3. **单位**:
    - 内存/磁盘容量单位为字节（Byte）

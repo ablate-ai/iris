@@ -50,7 +50,6 @@ message SystemMetrics {
   MemoryMetrics memory = 2;
   repeated DiskMetrics disks = 3;
   NetworkMetrics network = 4;
-  repeated ProcessMetrics processes = 5;
   SystemInfo system_info = 6;       // 系统信息
   AgentMetrics agent_metrics = 7;  // 探针自身指标
 }
@@ -95,15 +94,6 @@ message NetworkMetrics {
   uint64 packets_recv = 4;      // 接收包数
   uint64 errors_in = 5;         // 接收错误数
   uint64 errors_out = 6;        // 发送错误数
-}
-
-// 进程指标
-message ProcessMetrics {
-  int32 pid = 1;                // 进程 ID
-  string name = 2;              // 进程名
-  double cpu_usage = 3;         // CPU 使用率
-  uint64 memory = 4;            // 内存使用（字节）
-  string status = 5;            // 状态
 }
 
 // 系统信息

@@ -37,7 +37,6 @@ fn create_test_metrics(agent_id: &str, timestamp: i64) -> MetricsRequest {
                 errors_in: 0,
                 errors_out: 0,
             }),
-            processes: vec![],
             system_info: None,
             agent_metrics: None,
         }),
@@ -190,7 +189,7 @@ async fn test_concurrent_single_agent_writes() {
             for i in 0..writes_per_task {
                 let timestamp = task_id * writes_per_task + i;
                 let metrics = create_test_metrics("agent-1", timestamp as i64);
-                storage_clone.save_metrics(&metrics).await;
+                storage_clone.save_metrics_sync(&metrics).await.unwrap();
             }
         });
         handles.push(handle);
@@ -210,12 +209,9 @@ async fn test_concurrent_single_agent_writes() {
         total_writes, elapsed, throughput
     );
 
-    // 等待批量写入完成
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // 验证数据
+    // 持久化模式下，历史查询会返回完整结果，而不受缓存 100 条限制
     let history = storage.get_agent_history("agent-1", 2000).await;
-    assert!(history.len() <= 100, "Cache should limit to 100 entries");
+    assert_eq!(history.len(), total_writes, "History should include persisted data");
 }
 
 #[tokio::test]
@@ -398,15 +394,12 @@ async fn test_memory_leak_simulation() {
     // 写入大量数据
     for i in 0..1000 {
         let metrics = create_test_metrics("agent-1", i);
-        storage.save_metrics(&metrics).await;
+        storage.save_metrics_sync(&metrics).await.unwrap();
     }
 
-    // 等待批量写入完成
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // 缓存应该限制在 100 条
+    // 持久化模式下，历史查询会返回完整结果
     let history = storage.get_agent_history("agent-1", 2000).await;
-    assert_eq!(history.len(), 100, "Cache should enforce size limit");
+    assert_eq!(history.len(), 1000, "History should include persisted data");
 }
 
 #[tokio::test]
@@ -459,7 +452,7 @@ async fn test_stress_multiple_agents_with_different_rates() {
         let history = storage.get_agent_history(&agent_id_str, 200).await;
         assert_eq!(
             history.len(),
-            expected.min(100),
+            expected.min(200),
             "Agent {} has wrong count",
             agent_id
         );
@@ -488,19 +481,8 @@ async fn test_large_payload_performance() {
     // 创建带有大量数据的指标
     let mut large_metrics = create_test_metrics("agent-1", 1000);
     if let Some(system) = &mut large_metrics.system {
-        // 添加大量进程数据
-        system.processes = (0..100)
-            .map(|i| ProcessMetrics {
-                pid: i,
-                name: format!("process-{}", i),
-                cpu_usage: (i as f64) % 100.0,
-                memory: (i as u64) * 1_000_000,
-                status: "Running".to_string(),
-            })
-            .collect();
-
-        // 添加大量磁盘数据
-        system.disks = (0..10)
+        // 添加大量磁盘数据，扩大单条 payload 体积
+        system.disks = (0..110)
             .map(|i| DiskMetrics {
                 mount_point: format!("/mnt/{}", i),
                 device: format!("/dev/sd{}", i),

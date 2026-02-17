@@ -209,7 +209,7 @@ sudo systemctl cat iris-server | grep ExecStart
 
 **优化建议**：
 
-1. 调整 Agent 上报间隔（默认 10 秒）：
+1. 调整 Agent 上报间隔（默认 1 秒）：
 ```bash
 # 修改为 30 秒
 iris-agent --server http://server:50051 --interval 30

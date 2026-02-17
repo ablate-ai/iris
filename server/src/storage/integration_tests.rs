@@ -38,7 +38,6 @@ fn create_test_metrics(agent_id: &str, timestamp: i64) -> MetricsRequest {
                 errors_in: 0,
                 errors_out: 0,
             }),
-            processes: vec![],
             system_info: None,
             agent_metrics: None,
         }),

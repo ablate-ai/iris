@@ -1,6 +1,6 @@
 use common::proto::{
-    AgentMetrics, CpuMetrics, DiskMetrics, MemoryMetrics, NetworkMetrics, ProcessMetrics,
-    SystemInfo, SystemMetrics,
+    AgentMetrics, CpuMetrics, DiskMetrics, MemoryMetrics, NetworkMetrics, SystemInfo,
+    SystemMetrics,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -23,7 +23,6 @@ static SYSTEM: once_cell::sync::Lazy<Mutex<System>> = once_cell::sync::Lazy::new
     // 第一次刷新，为后续采集做准备
     sys.refresh_cpu_usage();
     sys.refresh_memory();
-    sys.refresh_processes(ProcessesToUpdate::All, true);
     Mutex::new(sys)
 });
 
@@ -47,8 +46,6 @@ pub fn collect_metrics() -> SystemMetrics {
 
     // 刷新其他系统信息
     sys.refresh_memory();
-    sys.refresh_processes(ProcessesToUpdate::All, true);
-
     let collection_time_ms = start.elapsed().as_millis() as u64;
 
     SystemMetrics {
@@ -56,7 +53,6 @@ pub fn collect_metrics() -> SystemMetrics {
         memory: Some(collect_memory_metrics(&sys)),
         disks: collect_disk_metrics(),
         network: Some(collect_network_metrics()),
-        processes: collect_process_metrics(&sys),
         system_info: Some(collect_system_info(&sys)),
         agent_metrics: Some(collect_agent_metrics(&mut sys, collection_time_ms)),
     }
@@ -190,20 +186,6 @@ fn collect_network_metrics() -> NetworkMetrics {
         errors_in,
         errors_out,
     }
-}
-
-fn collect_process_metrics(sys: &System) -> Vec<ProcessMetrics> {
-    sys.processes()
-        .iter()
-        .take(10) // 只取前 10 个进程
-        .map(|(pid, process)| ProcessMetrics {
-            pid: pid.as_u32() as i32,
-            name: process.name().to_string_lossy().to_string(),
-            cpu_usage: process.cpu_usage() as f64,
-            memory: process.memory(),
-            status: format!("{:?}", process.status()),
-        })
-        .collect()
 }
 
 fn collect_system_info(sys: &System) -> SystemInfo {
