@@ -59,9 +59,10 @@ impl Default for StorageConfig {
             batch_size: BATCH_SIZE,
             batch_timeout: BATCH_TIMEOUT,
             channel_capacity: CHANNEL_CAPACITY,
-            max_records_per_agent: 10000,
-            retention_days: 30,
-            cleanup_interval_hours: 1,
+            // 保留约 7 天数据（1秒1次上报：7 × 86400 = 604,800 条）
+            max_records_per_agent: 604_800,
+            retention_days: 0, // 禁用时间清理，仅按数量限制
+            cleanup_interval_hours: 6, // 每 6 小时清理一次
             enable_cleanup: true,
         }
     }
@@ -72,14 +73,14 @@ impl Default for StorageConfig {
 /// 数据流:
 /// 1. 收到 MetricsRequest
 /// 2. 立即更新内存缓存 (供快速查询)
-/// 3. 如果启用持久化：发送到写入队列 (非阻塞)
+/// 3. 如果启用持久化：发送到写入队列 (阻塞等待)
 /// 4. 后台任务累积到 50 条或 5 秒后批量写入 redb
 #[derive(Clone)]
 pub struct Storage {
     /// 内存缓存
     cache: Arc<cache::Cache>,
-    /// 写入通道 sender（仅持久化模式）
-    write_tx: Option<mpsc::Sender<MetricsRequest>>,
+    /// 写入通道 sender（仅持久化模式），包装在 Arc<RwLock> 中以支持 shutdown 时关闭
+    write_tx: Option<Arc<RwLock<Option<mpsc::Sender<MetricsRequest>>>>>,
     /// 后台任务句柄
     writer_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
     /// 运行状态
@@ -101,6 +102,10 @@ impl Storage {
     }
 
     /// 使用自定义配置创建 Storage
+    ///
+    /// # Panics
+    ///
+    /// 如果启用持久化但数据库创建失败，会 panic
     pub fn with_config(config: StorageConfig) -> Self {
         let cache = Arc::new(cache::Cache::new(config.cache_size_per_agent));
         let running = Arc::new(RwLock::new(true));
@@ -108,7 +113,12 @@ impl Storage {
         // 根据配置决定是否启用持久化
         let (write_tx, writer_handle, persist_enabled, persist, cleanup_handle, cleanup_running) =
             if let Some(db_path) = &config.db_path {
-                let persist = Arc::new(PersistStorage::new(db_path));
+                let persist = match PersistStorage::new(db_path) {
+                    Ok(p) => Arc::new(p),
+                    Err(e) => {
+                        panic!("Failed to create persist storage at {}: {}", db_path, e);
+                    }
+                };
                 let (tx, rx) = mpsc::channel(config.channel_capacity);
 
                 // 启动后台批量写入任务
@@ -145,7 +155,7 @@ impl Storage {
                     "Storage initialized with persistence"
                 );
 
-                (Some(tx), Some(Arc::new(handle)), true, Some(persist), cleanup_handle, cleanup_running)
+                (Some(Arc::new(RwLock::new(Some(tx)))), Some(Arc::new(handle)), true, Some(persist), cleanup_handle, cleanup_running)
             } else {
                 info!(
                     cache_size = config.cache_size_per_agent,
@@ -171,20 +181,22 @@ impl Storage {
     ///
     /// 流程:
     /// 1. 立即更新内存缓存
-    /// 2. 如果启用持久化：异步发送到持久化队列（阻塞等待）
+    /// 2. 如果启用持久化：异步发送到持久化队列
     pub async fn save_metrics(&self, metrics: &MetricsRequest) {
         // 1. 立即更新缓存
         self.cache.update(metrics.clone()).await;
 
         // 2. 如果启用持久化，发送到持久化队列（阻塞等待）
-        if let Some(tx) = &self.write_tx {
-            if let Err(e) = tx.send(metrics.clone()).await {
-                // 通道关闭时记录错误
-                error!(
-                    agent_id = %metrics.agent_id,
-                    error = %e,
-                    "Failed to send metrics to persistence queue"
-                );
+        if let Some(tx_lock) = &self.write_tx {
+            if let Some(tx) = tx_lock.read().await.as_ref() {
+                if let Err(e) = tx.send(metrics.clone()).await {
+                    // 通道关闭时记录错误
+                    error!(
+                        agent_id = %metrics.agent_id,
+                        error = %e,
+                        "Failed to send metrics to persistence queue"
+                    );
+                }
             }
         }
 
@@ -218,45 +230,60 @@ impl Storage {
     pub async fn shutdown(&self) -> Result<()> {
         info!("Storage shutdown initiated");
 
-        // 标记为不再运行
-        *self.running.write().await = false;
-
         // 如果启用了持久化，关闭写入通道并等待任务完成
         if self.persist_enabled {
-            info!("Closing persistence queue...");
-
             // 停止清理任务
             if let (Some(cleanup_running), Some(cleanup_handle)) = (&self.cleanup_running, &self.cleanup_handle) {
                 info!("Stopping cleanup task...");
-                cleanup_running.store(false, std::sync::atomic::Ordering::Relaxed);
+                cleanup_running.store(false, std::sync::atomic::Ordering::SeqCst);
 
-                // 给清理任务一点时间优雅退出
-                tokio::time::sleep(Duration::from_millis(100)).await;
-
-                // 如果还没有退出，则 abort
-                if !cleanup_handle.is_finished() {
-                    cleanup_handle.abort();
-                    info!("Cleanup task aborted");
-                } else {
-                    info!("Cleanup task stopped successfully");
+                // 等待清理任务完成（最多 5 秒）
+                // 使用 AbortHandle 来检查和 abort，但不直接 await（因为这是 &self）
+                let cleanup_abort = cleanup_handle.abort_handle();
+                match tokio::time::timeout(Duration::from_secs(5), async {
+                    // 轮询检查任务是否完成
+                    loop {
+                        if cleanup_handle.is_finished() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }).await {
+                    Ok(_) => info!("Cleanup task stopped successfully"),
+                    Err(_) => {
+                        warn!("Cleanup task timeout, aborting...");
+                        cleanup_abort.abort();
+                    }
                 }
             }
 
             // 关闭发送端，让接收端知道不会再有新数据
-            drop(self.write_tx.clone());
+            if let Some(tx_lock) = &self.write_tx {
+                let tx = tx_lock.write().await.take();
+                drop(tx); // 显式 drop，关闭通道
+                info!("Write channel closed");
+            }
 
-            // 等待后台任务完成（最多 10 秒）
-            if let Some(_handle) = &self.writer_handle {
-                match tokio::time::timeout(
-                    Duration::from_secs(10),
-                    async {
-                        // 注意：不能直接 await Arc<JoinHandle>，需要特殊处理
-                        // 这里我们依赖 running 标志让任务自行退出
+            // 标记为不再运行（让批量写入任务作为备用退出机制）
+            *self.running.write().await = false;
+
+            // 等待批量写入任务完成（最多 10 秒）
+            if let Some(writer_handle) = &self.writer_handle {
+                let writer_abort = writer_handle.abort_handle();
+                match tokio::time::timeout(Duration::from_secs(10), async {
+                    // 轮询检查任务是否完成
+                    loop {
+                        if writer_handle.is_finished() {
+                            break;
+                        }
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
-                ).await {
-                    Ok(_) => info!("Persistence queue flushed successfully"),
-                    Err(_) => warn!("Persistence queue flush timeout after 10s"),
+                }).await {
+                    Ok(_) => info!("Batch writer task stopped successfully"),
+                    Err(_) => {
+                        warn!("Batch writer task timeout, aborting...");
+                        writer_abort.abort();
+                    }
                 }
             }
         }
@@ -281,17 +308,26 @@ impl Storage {
         loop {
             tokio::select! {
                 // 接收新数据
-                Some(metrics) = rx.recv() => {
-                    buffer.push(metrics);
+                result = rx.recv() => {
+                    match result {
+                        Some(metrics) => {
+                            buffer.push(metrics);
 
-                    // 达到批量大小，立即写入
-                    if buffer.len() >= batch_size {
-                        if let Err(e) = persist.flush_batch(&buffer).await {
-                            error!("Failed to flush batch: {}", e);
-                        } else {
-                            debug!("Flushed {} metrics (batch size reached)", buffer.len());
+                            // 达到批量大小，立即写入
+                            if buffer.len() >= batch_size {
+                                if let Err(e) = persist.flush_batch(&buffer).await {
+                                    error!("Failed to flush batch: {}", e);
+                                } else {
+                                    debug!("Flushed {} metrics (batch size reached)", buffer.len());
+                                }
+                                buffer.clear();
+                            }
                         }
-                        buffer.clear();
+                        None => {
+                            // 通道关闭，退出循环
+                            info!("Write channel closed, exiting batch writer");
+                            break;
+                        }
                     }
                 }
                 // 超时触发
@@ -305,7 +341,7 @@ impl Storage {
                         buffer.clear();
                     }
 
-                    // 检查是否应该继续运行
+                    // 检查是否应该继续运行（备用退出机制）
                     if !*running.read().await {
                         info!("Shutdown signal received, exiting batch writer");
                         break;

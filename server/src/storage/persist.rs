@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 /// 表定义: metrics
-/// Key: "agent_id:timestamp" (字符串)
+/// Key: "agent_id\0timestamp" (字符串，使用 \0 分隔)
 /// Value: 序列化后的 MetricsRequest
 const METRICS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metrics");
 
@@ -28,47 +28,52 @@ pub struct PersistStorage {
 
 impl PersistStorage {
     /// 创建新的持久化存储
-    pub fn new(db_path: &str) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// 如果数据库创建/打开失败，返回错误
+    pub fn new(db_path: &str) -> Result<Self> {
         let path = Path::new(db_path);
 
         // 如果父目录不存在，创建它
         if let Some(parent) = path.parent() {
             if !parent.exists() {
-                std::fs::create_dir_all(parent).expect("Failed to create database directory");
+                std::fs::create_dir_all(parent)?;
             }
         }
 
         // 尝试创建或打开数据库
         let db = if path.exists() {
             info!("Opening existing redb database at {}", db_path);
-            Database::open(path).expect("Failed to open database")
+            Database::open(path)?
         } else {
             info!("Creating new redb database at {}", db_path);
-            Database::create(path).expect("Failed to create database")
+            Database::create(path)?
         };
 
         // 初始化表结构
-        Self::init_tables(&db);
+        Self::init_tables(&db)?;
 
-        Self { db: Arc::new(db) }
+        Ok(Self { db: Arc::new(db) })
     }
 
     /// 初始化数据库表
-    fn init_tables(db: &Database) {
-        let write_txn = db.begin_write().expect("Failed to begin write");
+    fn init_tables(db: &Database) -> Result<()> {
+        let write_txn = db.begin_write()?;
         {
             // 打开或创建 metrics 表
-            let _ = write_txn.open_table(METRICS_TABLE);
+            let _ = write_txn.open_table(METRICS_TABLE)?;
             // 打开或创建 agent_latest 表
-            let _ = write_txn.open_table(AGENT_LATEST_TABLE);
+            let _ = write_txn.open_table(AGENT_LATEST_TABLE)?;
         }
-        write_txn.commit().expect("Failed to commit init");
+        write_txn.commit()?;
+        Ok(())
     }
 
     /// 生成复合键: "agent_id\0timestamp"
-    /// 使用 \0 作为分隔符，避免 agent_id 中包含冒号导致解析错误
+    /// 使用 \0 作为分隔符，timestamp 使用固定 20 位数字，确保正确排序
     fn make_key(agent_id: &str, timestamp: i64) -> String {
-        format!("{}\0{}", agent_id, timestamp)
+        format!("{}\0{:020}", agent_id, timestamp)
     }
 
     /// 解析复合键，返回 (agent_id, timestamp)
@@ -76,6 +81,17 @@ impl PersistStorage {
         let (agent_id, ts_str) = key.split_once('\0')?;
         let timestamp = ts_str.parse::<i64>().ok()?;
         Some((agent_id, timestamp))
+    }
+
+    /// 为查询构造 key 范围的起始和结束边界
+    /// 返回 (start_key, end_key)
+    fn make_key_range(agent_id: &str) -> (String, String) {
+        // 起始: "agent_id\0"
+        let start = format!("{}\0", agent_id);
+        // 结束: "agent_id\0" 后面跟着 20 个 '9'（最大可能的 timestamp）
+        // 由于 timestamp 是固定 20 位，999...999 是最大值
+        let end = format!("{}\0{:020}", agent_id, i64::MAX);
+        (start, end)
     }
 
     /// 批量写入指标数据
@@ -150,11 +166,8 @@ impl PersistStorage {
 
             let mut results = Vec::new();
 
-            // 构造 agent 的 key 前缀范围
-            // 从 "agent_id\0" 开始，到 "agent_id\0\xff..." 结束
-            let start_prefix = format!("{}\0", agent_id);
-            let mut end_prefix = format!("{}\0", agent_id);
-            end_prefix.push('\u{10ffff}'); // Unicode 最大字符
+            // 构造 agent 的 key 范围
+            let (start_prefix, end_prefix) = Self::make_key_range(&agent_id);
 
             // 使用 range 查询该 agent 的所有数据
             let iter = table.range(start_prefix.as_str()..end_prefix.as_str())?;
@@ -228,6 +241,8 @@ impl PersistStorage {
     }
 
     /// 删除指定 agent 超过保留数量的旧记录，返回删除数量
+    ///
+    /// 为避免内存占用过大，分批处理删除操作
     pub async fn delete_old_records(&self, agent_id: &str, keep_count: usize) -> Result<usize> {
         let db = self.db.clone();
         let agent_id = agent_id.to_string();
@@ -238,9 +253,7 @@ impl PersistStorage {
                 let read_txn = db.begin_read()?;
                 let table = read_txn.open_table(METRICS_TABLE)?;
 
-                let start_prefix = format!("{}\0", agent_id);
-                let mut end_prefix = format!("{}\0", agent_id);
-                end_prefix.push('\u{10ffff}');
+                let (start_prefix, end_prefix) = Self::make_key_range(&agent_id);
 
                 let iter = table.range(start_prefix.as_str()..end_prefix.as_str())?;
                 let mut keys = Vec::new();
@@ -254,7 +267,7 @@ impl PersistStorage {
             let total = keys.len();
             if total <= keep_count {
                 debug!(
-                    "agent {} 共 {} 条记录，保留 {} 条，无需删除",
+                    "Agent {} has {} records, keeping {} records, no deletion needed",
                     agent_id, total, keep_count
                 );
                 return Ok(0);
@@ -264,66 +277,103 @@ impl PersistStorage {
             let delete_count = total - keep_count;
             let keys_to_delete = &keys[..delete_count];
 
-            let write_txn = db.begin_write()?;
-            {
-                let mut table = write_txn.open_table(METRICS_TABLE)?;
-                for key in keys_to_delete {
-                    table.remove(key.as_str())?;
+            // 分批删除，每批最多 10000 条，避免单次事务过大
+            const BATCH_SIZE: usize = 10000;
+            let mut total_deleted = 0;
+
+            for chunk in keys_to_delete.chunks(BATCH_SIZE) {
+                let write_txn = db.begin_write()?;
+                {
+                    let mut table = write_txn.open_table(METRICS_TABLE)?;
+                    for key in chunk {
+                        table.remove(key.as_str())?;
+                    }
                 }
+                write_txn.commit()?;
+                total_deleted += chunk.len();
             }
-            write_txn.commit()?;
 
             info!(
-                "agent {} 删除了 {} 条旧记录，保留 {} 条",
-                agent_id, delete_count, keep_count
+                "Agent {} deleted {} old records, keeping {} records",
+                agent_id, total_deleted, keep_count
             );
-            Ok::<usize, anyhow::Error>(delete_count)
+            Ok::<usize, anyhow::Error>(total_deleted)
         })
         .await
         .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
     }
 
     /// 删除指定时间之前的所有记录，返回删除数量
+    ///
+    /// 为避免内存占用过大和提升性能，按 agent 分批处理
     pub async fn delete_before_timestamp(&self, before_ts: i64) -> Result<usize> {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
-            // 先收集需要删除的 key
-            let keys_to_delete: Vec<String> = {
+            // 先获取所有 agent_id
+            let agent_ids: Vec<String> = {
                 let read_txn = db.begin_read()?;
-                let table = read_txn.open_table(METRICS_TABLE)?;
-
-                let mut keys = Vec::new();
+                let table = read_txn.open_table(AGENT_LATEST_TABLE)?;
+                let mut ids = Vec::new();
                 let iter = table.iter()?;
                 for item in iter {
                     let (key, _) = item?;
-                    let key_str = key.value();
-                    if let Some((_, ts)) = Self::parse_key(key_str) {
-                        if ts < before_ts {
-                            keys.push(key_str.to_string());
-                        }
-                    }
+                    ids.push(key.value().to_string());
                 }
-                keys
+                ids
             };
 
-            if keys_to_delete.is_empty() {
-                debug!("没有早于 {} 的记录需要删除", before_ts);
-                return Ok(0);
-            }
+            let mut total_deleted = 0;
 
-            let delete_count = keys_to_delete.len();
-            let write_txn = db.begin_write()?;
-            {
-                let mut table = write_txn.open_table(METRICS_TABLE)?;
-                for key in &keys_to_delete {
-                    table.remove(key.as_str())?;
+            // 对每个 agent 分别处理，避免一次性遍历整个表
+            for agent_id in agent_ids {
+                // 收集该 agent 需要删除的 key
+                let keys_to_delete: Vec<String> = {
+                    let read_txn = db.begin_read()?;
+                    let table = read_txn.open_table(METRICS_TABLE)?;
+
+                    let (start_prefix, end_prefix) = Self::make_key_range(&agent_id);
+                    let mut keys = Vec::new();
+                    let iter = table.range(start_prefix.as_str()..end_prefix.as_str())?;
+
+                    for item in iter {
+                        let (key, _) = item?;
+                        let key_str = key.value();
+                        if let Some((_, ts)) = Self::parse_key(key_str) {
+                            if ts < before_ts {
+                                keys.push(key_str.to_string());
+                            }
+                        }
+                    }
+                    keys
+                };
+
+                if keys_to_delete.is_empty() {
+                    continue;
+                }
+
+                // 分批删除，每批最多 10000 条
+                const BATCH_SIZE: usize = 10000;
+                for chunk in keys_to_delete.chunks(BATCH_SIZE) {
+                    let write_txn = db.begin_write()?;
+                    {
+                        let mut table = write_txn.open_table(METRICS_TABLE)?;
+                        for key in chunk {
+                            table.remove(key.as_str())?;
+                        }
+                    }
+                    write_txn.commit()?;
+                    total_deleted += chunk.len();
                 }
             }
-            write_txn.commit()?;
 
-            info!("删除了 {} 条早于 {} 的记录", delete_count, before_ts);
-            Ok::<usize, anyhow::Error>(delete_count)
+            if total_deleted > 0 {
+                info!("删除了 {} 条早于 {} 的记录", total_deleted, before_ts);
+            } else {
+                debug!("没有早于 {} 的记录需要删除", before_ts);
+            }
+
+            Ok::<usize, anyhow::Error>(total_deleted)
         })
         .await
         .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
@@ -413,7 +463,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         let metrics = vec![
             create_test_metrics("agent-1", 1000),
@@ -443,7 +493,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         let metrics = vec![
             create_test_metrics("agent-1", 1000),
@@ -467,7 +517,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
         storage.flush_batch(&[]).await.unwrap(); // 不应该 panic
     }
 
@@ -476,7 +526,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         // 写入初始数据
         storage
@@ -502,7 +552,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         let result = storage
             .query_by_agent("nonexistent", 0, 9999)
@@ -516,7 +566,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         let result = storage
             .get_agent_latest_timestamp("nonexistent")
@@ -530,7 +580,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         // 写入多个批次
         for i in 0..10 {
@@ -559,7 +609,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         // 测试包含特殊字符的 agent_id
         let special_ids = vec!["agent-1", "agent_2", "agent.3", "agent:4"];
@@ -587,7 +637,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         // 写入大量数据
         let metrics: Vec<_> = (0..1000)
@@ -613,7 +663,7 @@ mod tests {
             .unwrap()
             .to_string();
 
-        let storage = std::sync::Arc::new(PersistStorage::new(&db_path));
+        let storage = PersistStorage::new(&db_path).unwrap();
         let mut handles = vec![];
 
         // 并发写入
@@ -648,7 +698,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = std::sync::Arc::new(PersistStorage::new(&db_path));
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         // 先写入数据
         let metrics: Vec<_> = (0..100)
@@ -682,7 +732,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         // 乱序写入
         let timestamps = vec![5000, 1000, 3000, 4000, 2000];
@@ -719,7 +769,7 @@ mod tests {
 
         // 写入数据
         {
-            let storage = PersistStorage::new(&db_path);
+            let storage = PersistStorage::new(&db_path).unwrap();
             storage
                 .flush_batch(&[create_test_metrics("agent-1", 1000)])
                 .await
@@ -727,7 +777,7 @@ mod tests {
         }
 
         // 重新打开数据库
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
         let result = storage
             .query_by_agent("agent-1", 0, 9999)
             .await
@@ -741,7 +791,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         // 空数据库
         let ids = storage.get_all_agent_ids().await.unwrap();
@@ -765,7 +815,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         // 写入 5 条记录
         let metrics: Vec<_> = (1..=5)
@@ -789,7 +839,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         // 写入 3 条记录
         let metrics: Vec<_> = (1..=3)
@@ -810,7 +860,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         // 写入多个 agent 的数据
         let metrics = vec![
@@ -843,7 +893,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
-        let storage = PersistStorage::new(&db_path);
+        let storage = PersistStorage::new(&db_path).unwrap();
 
         let metrics = vec![create_test_metrics("agent-1", 5000)];
         storage.flush_batch(&metrics).await.unwrap();

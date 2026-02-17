@@ -23,6 +23,11 @@ pub struct CleanupTask {
 impl CleanupTask {
     /// 创建清理任务
     pub fn new(config: StorageConfig, storage: Arc<PersistStorage>) -> Self {
+        // 输入验证
+        assert!(config.cleanup_interval_hours > 0, "cleanup_interval_hours must be positive");
+        assert!(config.max_records_per_agent > 0, "max_records_per_agent must be positive");
+        // retention_days 允许为 0（禁用时间清理）
+
         Self {
             config,
             storage,
@@ -39,42 +44,55 @@ impl CleanupTask {
     pub async fn run(&self) {
         let interval = Duration::from_secs(self.config.cleanup_interval_hours * 3600);
         let mut ticker = tokio::time::interval(interval);
+        // 创建一个独立的检查间隔，用于及时响应停止信号
+        let mut check_interval = tokio::time::interval(Duration::from_secs(10));
 
         info!(
             interval_hours = self.config.cleanup_interval_hours,
             max_records_per_agent = self.config.max_records_per_agent,
             retention_days = self.config.retention_days,
-            "清理任务已启动"
+            "Cleanup task started"
         );
 
         loop {
-            ticker.tick().await;
+            tokio::select! {
+                _ = ticker.tick() => {
+                    // 检查是否应该继续运行
+                    if !self.running.load(Ordering::SeqCst) {
+                        info!("Cleanup task received stop signal, exiting");
+                        break;
+                    }
 
-            // 检查是否应该继续运行
-            if !self.running.load(Ordering::Relaxed) {
-                info!("清理任务收到停止信号，退出");
-                break;
+                    self.execute_cleanup().await;
+                }
+                // 定期检查停止信号（避免在长时间间隔中无法响应）
+                _ = check_interval.tick() => {
+                    if !self.running.load(Ordering::SeqCst) {
+                        info!("Cleanup task received stop signal, exiting");
+                        break;
+                    }
+                }
             }
-
-            self.execute_cleanup().await;
         }
+
+        info!("Cleanup task stopped");
     }
 
     /// 执行一次清理
     async fn execute_cleanup(&self) {
-        info!("开始执行数据清理");
+        info!("Starting data cleanup");
 
         // 获取所有 agent_id
         let agent_ids = match self.storage.get_all_agent_ids().await {
             Ok(ids) => ids,
             Err(e) => {
-                error!("获取 agent_id 列表失败: {}", e);
+                error!("Failed to get agent_id list: {}", e);
                 return;
             }
         };
 
         if agent_ids.is_empty() {
-            info!("没有 agent 数据需要清理");
+            info!("No agent data to clean");
             return;
         }
 
@@ -84,8 +102,8 @@ impl CleanupTask {
         // 1. 对每个 agent 执行数量限制清理
         for agent_id in &agent_ids {
             // 检查停止信号，避免长时间清理过程中无法响应
-            if !self.running.load(Ordering::Relaxed) {
-                warn!("清理过程中收到停止信号，提前退出");
+            if !self.running.load(Ordering::SeqCst) {
+                warn!("Received stop signal during cleanup, exiting early");
                 return;
             }
 
@@ -103,24 +121,29 @@ impl CleanupTask {
                 Err(e) => {
                     error!(
                         agent_id = %agent_id,
-                        "清理 agent 超量记录失败: {}", e
+                        error = %e,
+                        "Failed to delete old records for agent"
                     );
                 }
             }
         }
 
-        // 2. 执行时间限制清理
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-        let cutoff_ts = now - (self.config.retention_days as i64 * 86400);
-        let total_deleted_by_time = match self.storage.delete_before_timestamp(cutoff_ts).await {
-            Ok(deleted) => deleted,
-            Err(e) => {
-                error!("清理过期记录失败: {}", e);
-                0
+        // 2. 执行时间限制清理（仅当 retention_days > 0 时）
+        let total_deleted_by_time = if self.config.retention_days > 0 {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let cutoff_ts = now.saturating_sub(self.config.retention_days.saturating_mul(86400) as i64);
+            match self.storage.delete_before_timestamp(cutoff_ts).await {
+                Ok(deleted) => deleted,
+                Err(e) => {
+                    error!("Failed to delete expired records: {}", e);
+                    0
+                }
             }
+        } else {
+            0
         };
 
         info!(
@@ -129,7 +152,7 @@ impl CleanupTask {
             deleted_by_count = total_deleted_by_count,
             deleted_by_time = total_deleted_by_time,
             retention_days = self.config.retention_days,
-            "数据清理完成"
+            "Data cleanup completed"
         );
     }
 }
