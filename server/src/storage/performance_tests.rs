@@ -50,7 +50,7 @@ async fn test_performance_single_write() {
     let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
     let storage = Storage::with_config(StorageConfig {
-        db_path,
+        db_path: Some(db_path),
         ..Default::default()
     });
 
@@ -70,7 +70,7 @@ async fn test_performance_batch_writes() {
     let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
     let storage = Storage::with_config(StorageConfig {
-        db_path,
+        db_path: Some(db_path),
         batch_size: 100,
         batch_timeout: Duration::from_millis(100),
         ..Default::default()
@@ -105,7 +105,7 @@ async fn test_performance_cache_read() {
     let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
     let storage = Storage::with_config(StorageConfig {
-        db_path,
+        db_path: Some(db_path),
         cache_size_per_agent: 100,
         ..Default::default()
     });
@@ -141,11 +141,12 @@ async fn test_concurrent_single_agent_writes() {
     let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
     let storage = Arc::new(Storage::with_config(StorageConfig {
-        db_path,
+        db_path: Some(db_path),
         cache_size_per_agent: 100,
         batch_size: 50,
         batch_timeout: Duration::from_millis(100),
         channel_capacity: 1000,
+        ..Default::default()
     }));
 
     let num_tasks = 10;
@@ -195,11 +196,12 @@ async fn test_concurrent_multiple_agents_writes() {
     let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
     let storage = Arc::new(Storage::with_config(StorageConfig {
-        db_path,
+        db_path: Some(db_path),
         cache_size_per_agent: 100,
         batch_size: 50,
         batch_timeout: Duration::from_millis(100),
         channel_capacity: 1000,
+        ..Default::default()
     }));
 
     let num_agents = 10;
@@ -253,11 +255,12 @@ async fn test_concurrent_reads_and_writes() {
     let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
     let storage = Arc::new(Storage::with_config(StorageConfig {
-        db_path,
+        db_path: Some(db_path),
         cache_size_per_agent: 100,
         batch_size: 50,
         batch_timeout: Duration::from_millis(100),
         channel_capacity: 1000,
+        ..Default::default()
     }));
 
     let mut handles = vec![];
@@ -302,7 +305,7 @@ async fn test_concurrent_get_all_agents() {
     let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
     let storage = Arc::new(Storage::with_config(StorageConfig {
-        db_path,
+        db_path: Some(db_path),
         cache_size_per_agent: 100,
         ..Default::default()
     }));
@@ -338,11 +341,12 @@ async fn test_memory_leak_simulation() {
     let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
     let storage = Storage::with_config(StorageConfig {
-        db_path,
+        db_path: Some(db_path),
         cache_size_per_agent: 100,
         batch_size: 50,
         batch_timeout: Duration::from_millis(100),
         channel_capacity: 1000,
+        ..Default::default()
     });
 
     // 写入大量数据
@@ -365,11 +369,12 @@ async fn test_stress_multiple_agents_with_different_rates() {
     let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
     let storage = Arc::new(Storage::with_config(StorageConfig {
-        db_path,
+        db_path: Some(db_path),
         cache_size_per_agent: 100,
         batch_size: 50,
         batch_timeout: Duration::from_millis(100),
         channel_capacity: 1000,
+        ..Default::default()
     }));
 
     let mut handles = vec![];
@@ -411,11 +416,12 @@ async fn test_large_payload_performance() {
     let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
 
     let storage = Storage::with_config(StorageConfig {
-        db_path,
+        db_path: Some(db_path),
         cache_size_per_agent: 100,
         batch_size: 50,
         batch_timeout: Duration::from_millis(100),
         channel_capacity: 1000,
+        ..Default::default()
     });
 
     // 创建带有大量数据的指标
