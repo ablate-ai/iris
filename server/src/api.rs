@@ -20,7 +20,7 @@ use common::proto::MetricsRequest;
 
 #[derive(Clone)]
 pub struct ApiState {
-    pub storage: Storage,
+    pub storage: std::sync::Arc<Storage>,
     pub broadcast: broadcast::Sender<MetricsRequest>,
 }
 
@@ -71,7 +71,7 @@ impl<T: Serialize> ApiResponse<T> {
 }
 
 /// 创建 HTTP API 路由
-pub fn create_router(storage: Storage, broadcast: broadcast::Sender<MetricsRequest>) -> Router {
+pub fn create_router(storage: std::sync::Arc<Storage>, broadcast: broadcast::Sender<MetricsRequest>) -> Router {
     let state = ApiState { storage, broadcast };
 
     let cors = CorsLayer::new()

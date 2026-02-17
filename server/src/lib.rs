@@ -16,7 +16,7 @@ mod assets;
 mod storage;
 
 pub struct ProbeServer {
-    storage: storage::Storage,
+    storage: std::sync::Arc<storage::Storage>,
     broadcast: broadcast::Sender<MetricsRequest>,
 }
 
@@ -48,7 +48,7 @@ impl ProbeServer {
             db_path: Some(db_path.to_string()),
             ..Default::default()
         };
-        let storage = storage::Storage::with_config(config);
+        let storage = std::sync::Arc::new(storage::Storage::with_config(config));
 
         info!("Storage initialized with db_path: {}", db_path);
 
@@ -67,7 +67,7 @@ impl ProbeServer {
             db_path: None,
             ..Default::default()
         };
-        let storage = storage::Storage::with_config(config);
+        let storage = std::sync::Arc::new(storage::Storage::with_config(config));
 
         info!("Storage initialized in memory-only mode");
 
