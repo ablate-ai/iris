@@ -195,6 +195,11 @@
             color: #065f46;
         }
 
+        .status-offline {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
         .status-dot {
             width: 5px;
             height: 5px;
@@ -898,6 +903,11 @@
             const downloadTrend = currentDownloadSpeed > prevDownloadSpeed ? 'up' :
                                  currentDownloadSpeed < prevDownloadSpeed ? 'down' : 'neutral';
 
+            // 判断在线状态：如果最后一次心跳超过 10 秒，则认为离线
+            const now = Date.now();
+            const lastSeen = agent.timestamp * 1000; // 转换为毫秒
+            const isOnline = (now - lastSeen) < 10000; // 10 秒超时
+
             const getTrendIcon = (trend) => {
                 if (trend === 'up') return '↑';
                 if (trend === 'down') return '↓';
@@ -911,9 +921,9 @@
                             <div className="agent-name">{agent.hostname}</div>
                             <div className="agent-id">{agent.agent_id.substring(0, 8)}</div>
                         </div>
-                        <span className="agent-status status-online">
+                        <span className={`agent-status ${isOnline ? 'status-online' : 'status-offline'}`}>
                             <span className="status-dot"></span>
-                            在线
+                            {isOnline ? '在线' : '离线'}
                         </span>
                     </div>
                     <div className="agent-meta">
@@ -1422,11 +1432,16 @@
             };
 
             const agentsList = Array.from(agents.values());
-            const avgCpu = agentsList.length > 0
-                ? (agentsList.reduce((acc, a) => acc + (a.system?.cpu?.usage_percent || 0), 0) / agentsList.length).toFixed(1)
+            const onlineAgents = agentsList.filter(agent => {
+                const now = Date.now();
+                const lastSeen = agent.timestamp * 1000;
+                return (now - lastSeen) < 10000; // 10 秒超时
+            });
+            const avgCpu = onlineAgents.length > 0
+                ? (onlineAgents.reduce((acc, a) => acc + (a.system?.cpu?.usage_percent || 0), 0) / onlineAgents.length).toFixed(1)
                 : 0;
-            const avgMemory = agentsList.length > 0
-                ? (agentsList.reduce((acc, a) => acc + (a.system?.memory?.usage_percent || 0), 0) / agentsList.length).toFixed(1)
+            const avgMemory = onlineAgents.length > 0
+                ? (onlineAgents.reduce((acc, a) => acc + (a.system?.memory?.usage_percent || 0), 0) / onlineAgents.length).toFixed(1)
                 : 0;
 
             return (
@@ -1443,7 +1458,7 @@
 
                     <div className="container">
                         <div className="stats-grid">
-                            <StatCard label="在线 Agent" value={agents.size} />
+                            <StatCard label="在线 Agent" value={onlineAgents.length} />
                             <StatCard label="平均 CPU" value={avgCpu} unit="%" />
                             <StatCard label="平均内存" value={avgMemory} unit="%" />
                             <StatCard label="状态" value="正常" />
