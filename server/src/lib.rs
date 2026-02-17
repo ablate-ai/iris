@@ -105,9 +105,7 @@ impl ProbeServer {
 
         // 设置优雅关闭
         let shutdown_signal = async {
-            signal::ctrl_c()
-                .await
-                .expect("无法监听 Ctrl+C 信号");
+            signal::ctrl_c().await.expect("无法监听 Ctrl+C 信号");
             info!("收到关闭信号，正在优雅关闭...");
         };
 
@@ -138,8 +136,11 @@ impl ProbeService for ProbeServer {
         // 广播给前端
         let _ = self.broadcast.send(req.clone());
 
-        // 存储指标数据
-        self.storage.save_metrics(&req).await;
+        // 存储指标数据（等待持久化完成）
+        self.storage
+            .save_metrics_sync(&req)
+            .await
+            .map_err(|e| Status::internal(format!("持久化失败: {}", e)))?;
 
         let response = MetricsResponse {
             success: true,
@@ -172,7 +173,9 @@ impl ProbeService for ProbeServer {
                         let _ = broadcast.send(metrics.clone());
 
                         // 2. 存储所有指标（storage 内部有清理策略）
-                        storage.save_metrics(&metrics).await;
+                        if let Err(e) = storage.save_metrics_sync(&metrics).await {
+                            info!("Agent {} 指标持久化失败: {}", agent_id, e);
+                        }
                     }
                     Err(e) => {
                         info!("Agent {} 流式连接错误: {}", agent_id, e);

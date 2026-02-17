@@ -17,9 +17,11 @@ mod performance_tests;
 use anyhow::Result;
 use common::proto::MetricsRequest;
 use persist::PersistStorage;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -27,6 +29,13 @@ use tracing::{debug, error, info, warn};
 pub const BATCH_SIZE: usize = 50;
 pub const BATCH_TIMEOUT: Duration = Duration::from_secs(5);
 pub const CHANNEL_CAPACITY: usize = 1000;
+
+/// 写入请求（可选等待持久化完成）
+#[derive(Debug)]
+struct WriteRequest {
+    metrics: MetricsRequest,
+    ack: Option<oneshot::Sender<Result<()>>>,
+}
 
 /// Storage 配置
 #[derive(Debug, Clone)]
@@ -61,7 +70,7 @@ impl Default for StorageConfig {
             channel_capacity: CHANNEL_CAPACITY,
             // 保留约 7 天数据（1秒1次上报：7 × 86400 = 604,800 条）
             max_records_per_agent: 604_800,
-            retention_days: 0, // 禁用时间清理，仅按数量限制
+            retention_days: 0,         // 禁用时间清理，仅按数量限制
             cleanup_interval_hours: 6, // 每 6 小时清理一次
             enable_cleanup: true,
         }
@@ -80,7 +89,7 @@ pub struct Storage {
     /// 内存缓存
     cache: Arc<cache::Cache>,
     /// 写入通道 sender（仅持久化模式），包装在 Arc<RwLock> 中以支持 shutdown 时关闭
-    write_tx: Option<Arc<RwLock<Option<mpsc::Sender<MetricsRequest>>>>>,
+    write_tx: Option<Arc<RwLock<Option<mpsc::Sender<WriteRequest>>>>>,
     /// 后台任务句柄
     writer_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
     /// 运行状态
@@ -102,10 +111,6 @@ impl Storage {
     }
 
     /// 使用自定义配置创建 Storage
-    ///
-    /// # Panics
-    ///
-    /// 如果启用持久化但数据库创建失败，会 panic
     pub fn with_config(config: StorageConfig) -> Self {
         let cache = Arc::new(cache::Cache::new(config.cache_size_per_agent));
         let running = Arc::new(RwLock::new(true));
@@ -113,49 +118,64 @@ impl Storage {
         // 根据配置决定是否启用持久化
         let (write_tx, writer_handle, persist_enabled, persist, cleanup_handle, cleanup_running) =
             if let Some(db_path) = &config.db_path {
-                let persist = match PersistStorage::new(db_path) {
-                    Ok(p) => Arc::new(p),
-                    Err(e) => {
-                        panic!("Failed to create persist storage at {}: {}", db_path, e);
+                match PersistStorage::new(db_path) {
+                    Ok(persist) => {
+                        let persist = Arc::new(persist);
+                        let (tx, rx) = mpsc::channel(config.channel_capacity);
+
+                        // 启动后台批量写入任务
+                        let running_clone = running.clone();
+                        let persist_clone = persist.clone();
+                        let handle = tokio::spawn(async move {
+                            Self::batch_writer_task(
+                                rx,
+                                persist_clone,
+                                config.batch_size,
+                                config.batch_timeout,
+                                running_clone,
+                            )
+                            .await;
+                        });
+
+                        // 启动清理任务（如果启用）
+                        let (cleanup_handle, cleanup_running) = if config.enable_cleanup {
+                            let cleanup_task =
+                                cleanup::CleanupTask::new(config.clone(), persist.clone());
+                            let cleanup_running = cleanup_task.running_flag();
+                            let handle = tokio::spawn(async move {
+                                cleanup_task.run().await;
+                            });
+                            (Some(Arc::new(handle)), Some(cleanup_running))
+                        } else {
+                            (None, None)
+                        };
+
+                        info!(
+                            db_path = %db_path,
+                            cache_size = config.cache_size_per_agent,
+                            batch_size = config.batch_size,
+                            enable_cleanup = config.enable_cleanup,
+                            "Storage initialized with persistence"
+                        );
+
+                        (
+                            Some(Arc::new(RwLock::new(Some(tx)))),
+                            Some(Arc::new(handle)),
+                            true,
+                            Some(persist),
+                            cleanup_handle,
+                            cleanup_running,
+                        )
                     }
-                };
-                let (tx, rx) = mpsc::channel(config.channel_capacity);
-
-                // 启动后台批量写入任务
-                let running_clone = running.clone();
-                let persist_clone = persist.clone();
-                let handle = tokio::spawn(async move {
-                    Self::batch_writer_task(
-                        rx,
-                        persist_clone,
-                        config.batch_size,
-                        config.batch_timeout,
-                        running_clone,
-                    )
-                    .await;
-                });
-
-                // 启动清理任务（如果启用）
-                let (cleanup_handle, cleanup_running) = if config.enable_cleanup {
-                    let cleanup_task = cleanup::CleanupTask::new(config.clone(), persist.clone());
-                    let cleanup_running = cleanup_task.running_flag();
-                    let handle = tokio::spawn(async move {
-                        cleanup_task.run().await;
-                    });
-                    (Some(Arc::new(handle)), Some(cleanup_running))
-                } else {
-                    (None, None)
-                };
-
-                info!(
-                    db_path = %db_path,
-                    cache_size = config.cache_size_per_agent,
-                    batch_size = config.batch_size,
-                    enable_cleanup = config.enable_cleanup,
-                    "Storage initialized with persistence"
-                );
-
-                (Some(Arc::new(RwLock::new(Some(tx)))), Some(Arc::new(handle)), true, Some(persist), cleanup_handle, cleanup_running)
+                    Err(e) => {
+                        error!(
+                            db_path = %db_path,
+                            error = %e,
+                            "Failed to initialize persistence, fallback to memory-only mode"
+                        );
+                        (None, None, false, None, None, None)
+                    }
+                }
             } else {
                 info!(
                     cache_size = config.cache_size_per_agent,
@@ -164,6 +184,10 @@ impl Storage {
 
                 (None, None, false, None, None, None)
             };
+
+        if !persist_enabled {
+            info!("Persistence is disabled");
+        }
 
         Self {
             cache,
@@ -177,27 +201,52 @@ impl Storage {
         }
     }
 
-    /// 保存指标数据
-    ///
-    /// 流程:
-    /// 1. 立即更新内存缓存
-    /// 2. 如果启用持久化：异步发送到持久化队列
+    async fn enqueue_metrics(&self, metrics: &MetricsRequest, wait_persist: bool) -> Result<()> {
+        let tx_opt = if let Some(tx_lock) = &self.write_tx {
+            tx_lock.read().await.clone()
+        } else {
+            None
+        };
+
+        let Some(tx) = tx_opt else {
+            if self.persist_enabled {
+                return Err(anyhow::anyhow!("persistence queue is closed"));
+            }
+            return Ok(());
+        };
+
+        let (ack_tx, ack_rx) = if wait_persist {
+            let (tx, rx) = oneshot::channel();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
+
+        tx.send(WriteRequest {
+            metrics: metrics.clone(),
+            ack: ack_tx,
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to send metrics to queue: {}", e))?;
+
+        if let Some(rx) = ack_rx {
+            rx.await
+                .map_err(|e| anyhow::anyhow!("failed waiting persistence ack: {}", e))??;
+        }
+
+        Ok(())
+    }
+
+    /// 保存指标数据（仅保证写入缓存，持久化为异步排队）
     pub async fn save_metrics(&self, metrics: &MetricsRequest) {
-        // 1. 立即更新缓存
         self.cache.update(metrics.clone()).await;
 
-        // 2. 如果启用持久化，发送到持久化队列（阻塞等待）
-        if let Some(tx_lock) = &self.write_tx {
-            if let Some(tx) = tx_lock.read().await.as_ref() {
-                if let Err(e) = tx.send(metrics.clone()).await {
-                    // 通道关闭时记录错误
-                    error!(
-                        agent_id = %metrics.agent_id,
-                        error = %e,
-                        "Failed to send metrics to persistence queue"
-                    );
-                }
-            }
+        if let Err(e) = self.enqueue_metrics(metrics, false).await {
+            error!(
+                agent_id = %metrics.agent_id,
+                error = %e,
+                "Failed to enqueue metrics for persistence"
+            );
         }
 
         debug!(
@@ -209,19 +258,86 @@ impl Storage {
         );
     }
 
+    /// 保存指标数据并等待持久化落盘完成
+    pub async fn save_metrics_sync(&self, metrics: &MetricsRequest) -> Result<()> {
+        self.cache.update(metrics.clone()).await;
+
+        self.enqueue_metrics(metrics, true).await?;
+
+        debug!(
+            agent_id = %metrics.agent_id,
+            timestamp = metrics.timestamp,
+            persist = self.persist_enabled,
+            "Metrics saved to cache and persisted"
+        );
+        Ok(())
+    }
+
     /// 获取所有 Agent ID
     pub async fn get_all_agents(&self) -> Vec<String> {
-        self.cache.get_all_agents().await
+        let mut agent_set: HashSet<String> =
+            self.cache.get_all_agents().await.into_iter().collect();
+
+        if let Some(persist) = &self.persist {
+            match persist.get_all_agent_ids().await {
+                Ok(ids) => {
+                    for id in ids {
+                        agent_set.insert(id);
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Failed to load agent ids from persistence");
+                }
+            }
+        }
+
+        let mut agents: Vec<String> = agent_set.into_iter().collect();
+        agents.sort();
+        agents
     }
 
     /// 获取指定 Agent 的最新指标
     pub async fn get_agent_latest(&self, agent_id: &str) -> Option<MetricsRequest> {
-        self.cache.get_latest(agent_id).await
+        let cache_latest = self.cache.get_latest(agent_id).await;
+        if cache_latest.is_some() {
+            return cache_latest;
+        }
+
+        if let Some(persist) = &self.persist {
+            match persist.get_latest_metrics(agent_id).await {
+                Ok(v) => v,
+                Err(e) => {
+                    error!(agent_id = %agent_id, error = %e, "Failed to load latest metrics from persistence");
+                    None
+                }
+            }
+        } else {
+            None
+        }
     }
 
     /// 获取指定 Agent 的历史指标
     pub async fn get_agent_history(&self, agent_id: &str, limit: usize) -> Vec<MetricsRequest> {
-        self.cache.get_history(agent_id, limit).await
+        if limit == 0 {
+            return Vec::new();
+        }
+
+        let cache_history = self.cache.get_history(agent_id, limit).await;
+        if !cache_history.is_empty() {
+            return cache_history;
+        }
+
+        if let Some(persist) = &self.persist {
+            match persist.query_latest_by_agent(agent_id, limit).await {
+                Ok(v) => v,
+                Err(e) => {
+                    error!(agent_id = %agent_id, error = %e, "Failed to load history from persistence");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        }
     }
 
     /// 优雅关闭
@@ -233,7 +349,9 @@ impl Storage {
         // 如果启用了持久化，关闭写入通道并等待任务完成
         if self.persist_enabled {
             // 停止清理任务
-            if let (Some(cleanup_running), Some(cleanup_handle)) = (&self.cleanup_running, &self.cleanup_handle) {
+            if let (Some(cleanup_running), Some(cleanup_handle)) =
+                (&self.cleanup_running, &self.cleanup_handle)
+            {
                 info!("Stopping cleanup task...");
                 cleanup_running.store(false, std::sync::atomic::Ordering::SeqCst);
 
@@ -248,7 +366,9 @@ impl Storage {
                         }
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
-                }).await {
+                })
+                .await
+                {
                     Ok(_) => info!("Cleanup task stopped successfully"),
                     Err(_) => {
                         warn!("Cleanup task timeout, aborting...");
@@ -278,7 +398,9 @@ impl Storage {
                         }
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
-                }).await {
+                })
+                .await
+                {
                     Ok(_) => info!("Batch writer task stopped successfully"),
                     Err(_) => {
                         warn!("Batch writer task timeout, aborting...");
@@ -294,13 +416,14 @@ impl Storage {
 
     /// 后台批量写入任务
     async fn batch_writer_task(
-        mut rx: mpsc::Receiver<MetricsRequest>,
+        mut rx: mpsc::Receiver<WriteRequest>,
         persist: Arc<PersistStorage>,
         batch_size: usize,
         timeout: Duration,
         running: Arc<RwLock<bool>>,
     ) {
         let mut buffer = Vec::with_capacity(batch_size);
+        let mut pending_acks: Vec<oneshot::Sender<Result<()>>> = Vec::with_capacity(batch_size);
         let mut interval = tokio::time::interval(timeout);
 
         info!("Batch writer task started");
@@ -310,17 +433,15 @@ impl Storage {
                 // 接收新数据
                 result = rx.recv() => {
                     match result {
-                        Some(metrics) => {
-                            buffer.push(metrics);
+                        Some(req) => {
+                            buffer.push(req.metrics);
+                            if let Some(ack) = req.ack {
+                                pending_acks.push(ack);
+                            }
 
                             // 达到批量大小，立即写入
                             if buffer.len() >= batch_size {
-                                if let Err(e) = persist.flush_batch(&buffer).await {
-                                    error!("Failed to flush batch: {}", e);
-                                } else {
-                                    debug!("Flushed {} metrics (batch size reached)", buffer.len());
-                                }
-                                buffer.clear();
+                                Self::flush_buffer(&persist, &mut buffer, &mut pending_acks, "batch size reached").await;
                             }
                         }
                         None => {
@@ -333,12 +454,7 @@ impl Storage {
                 // 超时触发
                 _ = interval.tick() => {
                     if !buffer.is_empty() {
-                        if let Err(e) = persist.flush_batch(&buffer).await {
-                            error!("Failed to flush batch on timeout: {}", e);
-                        } else {
-                            debug!("Flushed {} metrics (timeout)", buffer.len());
-                        }
-                        buffer.clear();
+                        Self::flush_buffer(&persist, &mut buffer, &mut pending_acks, "timeout").await;
                     }
 
                     // 检查是否应该继续运行（备用退出机制）
@@ -352,13 +468,46 @@ impl Storage {
 
         // 刷新剩余数据
         if !buffer.is_empty() {
-            info!("Flushing remaining {} metrics before shutdown", buffer.len());
-            if let Err(e) = persist.flush_batch(&buffer).await {
-                error!("Failed to flush final batch: {}", e);
+            info!(
+                "Flushing remaining {} metrics before shutdown",
+                buffer.len()
+            );
+            if !Self::flush_buffer(&persist, &mut buffer, &mut pending_acks, "shutdown").await {
+                for ack in pending_acks.drain(..) {
+                    let _ = ack.send(Err(anyhow::anyhow!(
+                        "batch writer stopped before data was persisted"
+                    )));
+                }
             }
         }
 
         info!("Batch writer task stopped");
+    }
+
+    async fn flush_buffer(
+        persist: &Arc<PersistStorage>,
+        buffer: &mut Vec<MetricsRequest>,
+        pending_acks: &mut Vec<oneshot::Sender<Result<()>>>,
+        reason: &str,
+    ) -> bool {
+        if buffer.is_empty() {
+            return true;
+        }
+
+        match persist.flush_batch(buffer).await {
+            Ok(_) => {
+                debug!("Flushed {} metrics ({})", buffer.len(), reason);
+                for ack in pending_acks.drain(..) {
+                    let _ = ack.send(Ok(()));
+                }
+                buffer.clear();
+                true
+            }
+            Err(e) => {
+                error!("Failed to flush batch ({}): {}", reason, e);
+                false
+            }
+        }
     }
 }
 
