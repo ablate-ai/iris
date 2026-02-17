@@ -167,6 +167,41 @@ async fn test_storage_history() {
 }
 
 #[tokio::test]
+async fn test_storage_history_fallback_to_persistence_when_cache_insufficient() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let config = StorageConfig {
+        db_path: Some(db_path),
+        cache_size_per_agent: 5,
+        batch_size: 10,
+        batch_timeout: Duration::from_millis(100),
+        channel_capacity: 100,
+        ..Default::default()
+    };
+
+    let storage = Storage::with_config(config);
+
+    for i in 1..=20 {
+        let metrics = create_test_metrics("agent-1", i * 1000);
+        storage.save_metrics(&metrics).await;
+    }
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // limit 大于缓存容量，应从持久化补齐到完整结果
+    let history = storage.get_agent_history("agent-1", 20).await;
+    assert_eq!(history.len(), 20);
+    assert_eq!(history[0].timestamp, 1000);
+    assert_eq!(history[19].timestamp, 20000);
+}
+
+#[tokio::test]
 async fn test_storage_batch_write() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir
@@ -267,11 +302,11 @@ async fn test_storage_cache_limit() {
     // 等待批量写入
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // 缓存应该只保留最新的 5 条
+    // 历史查询应从持久化补齐，返回完整 10 条
     let history = storage.get_agent_history("agent-1", 20).await;
-    assert_eq!(history.len(), 5);
-    assert_eq!(history[0].timestamp, 6000); // 第 6 条
-    assert_eq!(history[4].timestamp, 10000); // 第 10 条
+    assert_eq!(history.len(), 10);
+    assert_eq!(history[0].timestamp, 1000);
+    assert_eq!(history[9].timestamp, 10000);
 }
 
 #[tokio::test]
@@ -310,9 +345,9 @@ async fn test_storage_multiple_agents_cache_isolation() {
     // 等待批量写入
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // agent-1 应该只保留最新的 3 条
+    // agent-1 历史查询应返回完整 5 条
     let history1 = storage.get_agent_history("agent-1", 10).await;
-    assert_eq!(history1.len(), 3);
+    assert_eq!(history1.len(), 5);
 
     // agent-2 应该保留全部 2 条
     let history2 = storage.get_agent_history("agent-2", 10).await;
@@ -497,9 +532,9 @@ async fn test_storage_high_frequency_writes() {
     // 等待所有批量写入完成
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // 验证缓存中的数据
+    // 历史查询应返回持久化中的完整 200 条
     let history = storage.get_agent_history("agent-1", 200).await;
-    assert_eq!(history.len(), 100); // 缓存只保留 100 条
+    assert_eq!(history.len(), 200);
 }
 
 #[tokio::test]

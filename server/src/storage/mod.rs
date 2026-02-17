@@ -328,20 +328,41 @@ impl Storage {
         }
 
         let cache_history = self.cache.get_history(agent_id, limit).await;
-        if !cache_history.is_empty() {
+        // 仅内存模式下，缓存是唯一数据源
+        if self.persist.is_none() {
             return cache_history;
         }
 
+        // 持久化模式下：优先返回完整历史，避免缓存命中导致历史截断
         if let Some(persist) = &self.persist {
+            if cache_history.len() >= limit {
+                return cache_history;
+            }
+
             match persist.query_latest_by_agent(agent_id, limit).await {
-                Ok(v) => v,
+                Ok(mut persisted) => {
+                    if persisted.is_empty() {
+                        return cache_history;
+                    }
+
+                    // 合并缓存和持久化结果，按时间戳+内容去重
+                    persisted.extend(cache_history);
+                    persisted.sort_by_key(|m| m.timestamp);
+                    persisted.dedup_by(|a, b| a.timestamp == b.timestamp && a == b);
+
+                    if persisted.len() > limit {
+                        persisted[persisted.len() - limit..].to_vec()
+                    } else {
+                        persisted
+                    }
+                }
                 Err(e) => {
                     error!(agent_id = %agent_id, error = %e, "Failed to load history from persistence");
-                    Vec::new()
+                    cache_history
                 }
             }
         } else {
-            Vec::new()
+            cache_history
         }
     }
 
