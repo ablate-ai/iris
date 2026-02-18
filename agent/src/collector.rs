@@ -1,6 +1,5 @@
 use common::proto::{
-    AgentMetrics, CpuMetrics, DiskMetrics, MemoryMetrics, NetworkMetrics, SystemInfo,
-    SystemMetrics,
+    AgentMetrics, CpuMetrics, DiskMetrics, MemoryMetrics, NetworkMetrics, SystemInfo, SystemMetrics,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -26,6 +25,14 @@ static SYSTEM: once_cell::sync::Lazy<Mutex<System>> = once_cell::sync::Lazy::new
     Mutex::new(sys)
 });
 
+// 全局 Disks 实例，避免每次采集都重新创建并扫描列表
+static DISKS: once_cell::sync::Lazy<Mutex<Disks>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(Disks::new_with_refreshed_list()));
+
+// 全局 Networks 实例，避免每次采集都重新创建并扫描接口列表
+static NETWORKS: once_cell::sync::Lazy<Mutex<Networks>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(Networks::new_with_refreshed_list()));
+
 // 标记是否已经完成初始化等待
 static CPU_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
@@ -41,22 +48,38 @@ pub fn collect_metrics() -> SystemMetrics {
         CPU_INITIALIZED.store(true, Ordering::Relaxed);
     }
 
-    let mut sys = SYSTEM.lock().unwrap();
+    let (cpu, memory, system_info) = {
+        let mut sys = SYSTEM.lock().unwrap();
 
-    // 刷新 CPU 使用率（需要两次刷新之间的差值）
-    sys.refresh_cpu_usage();
+        // 刷新 CPU 使用率（需要两次刷新之间的差值）
+        sys.refresh_cpu_usage();
+        // 刷新其他系统信息
+        sys.refresh_memory_specifics(MemoryRefreshKind::everything());
 
-    // 刷新其他系统信息
-    sys.refresh_memory_specifics(MemoryRefreshKind::everything());
+        (
+            collect_cpu_metrics(&sys),
+            collect_memory_metrics(&sys),
+            collect_system_info(&sys),
+        )
+    };
+
+    // 磁盘/网络采集也计入本次采集耗时
+    let disks = collect_disk_metrics();
+    let network = collect_network_metrics();
     let collection_time_ms = start.elapsed().as_millis() as u64;
+    // 最后刷新一次当前进程信息并写入探针自身指标
+    let agent_metrics = {
+        let mut sys = SYSTEM.lock().unwrap();
+        collect_agent_metrics(&mut sys, collection_time_ms)
+    };
 
     SystemMetrics {
-        cpu: Some(collect_cpu_metrics(&sys)),
-        memory: Some(collect_memory_metrics(&sys)),
-        disks: collect_disk_metrics(),
-        network: Some(collect_network_metrics()),
-        system_info: Some(collect_system_info(&sys)),
-        agent_metrics: Some(collect_agent_metrics(&mut sys, collection_time_ms)),
+        cpu: Some(cpu),
+        memory: Some(memory),
+        disks,
+        network: Some(network),
+        system_info: Some(system_info),
+        agent_metrics: Some(agent_metrics),
         // TCP Ping 采集已按需临时停用，固定上报空数组。
         tcp_ping: vec![],
     }
@@ -104,7 +127,11 @@ pub fn increment_errors() {
 fn collect_cpu_metrics(sys: &System) -> CpuMetrics {
     let cpus = sys.cpus();
     let per_core: Vec<f64> = cpus.iter().map(|cpu| cpu.cpu_usage() as f64).collect();
-    let usage_percent = per_core.iter().sum::<f64>() / per_core.len() as f64;
+    let usage_percent = if per_core.is_empty() {
+        0.0
+    } else {
+        per_core.iter().sum::<f64>() / per_core.len() as f64
+    };
 
     let load_avg = System::load_average();
 
@@ -119,24 +146,6 @@ fn collect_cpu_metrics(sys: &System) -> CpuMetrics {
 }
 
 fn collect_memory_metrics(sys: &System) -> MemoryMetrics {
-    #[cfg(target_os = "linux")]
-    if let Some((total, used, available, swap_total, swap_used)) = read_memory_info_from_proc() {
-        let usage_percent = if total > 0 {
-            (used as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        return MemoryMetrics {
-            total,
-            used,
-            available,
-            usage_percent,
-            swap_total,
-            swap_used,
-        };
-    }
-
     let total = sys.total_memory();
     let used = sys.used_memory();
     let available = sys.available_memory();
@@ -156,45 +165,9 @@ fn collect_memory_metrics(sys: &System) -> MemoryMetrics {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn read_memory_info_from_proc() -> Option<(u64, u64, u64, u64, u64)> {
-    use std::fs;
-
-    let content = fs::read_to_string("/proc/meminfo").ok()?;
-    let mut mem_total = 0u64;
-    let mut mem_available = 0u64;
-    let mut swap_total = 0u64;
-    let mut swap_free = 0u64;
-
-    for line in content.lines() {
-        if line.starts_with("MemTotal:") {
-            mem_total = parse_meminfo_kib(line)?;
-        } else if line.starts_with("MemAvailable:") {
-            mem_available = parse_meminfo_kib(line)?;
-        } else if line.starts_with("SwapTotal:") {
-            swap_total = parse_meminfo_kib(line)?;
-        } else if line.starts_with("SwapFree:") {
-            swap_free = parse_meminfo_kib(line)?;
-        }
-    }
-
-    if mem_total == 0 {
-        return None;
-    }
-
-    let used = mem_total.saturating_sub(mem_available);
-    let swap_used = swap_total.saturating_sub(swap_free);
-    Some((mem_total, used, mem_available, swap_total, swap_used))
-}
-
-#[cfg(target_os = "linux")]
-fn parse_meminfo_kib(line: &str) -> Option<u64> {
-    let value_kib = line.split_whitespace().nth(1)?.parse::<u64>().ok()?;
-    Some(value_kib.saturating_mul(1024))
-}
-
 fn collect_disk_metrics() -> Vec<DiskMetrics> {
-    let disks = Disks::new_with_refreshed_list();
+    let mut disks = DISKS.lock().unwrap();
+    disks.refresh(true);
 
     disks
         .iter()
@@ -223,7 +196,8 @@ fn collect_disk_metrics() -> Vec<DiskMetrics> {
 }
 
 fn collect_network_metrics() -> NetworkMetrics {
-    let networks = Networks::new_with_refreshed_list();
+    let mut networks = NETWORKS.lock().unwrap();
+    networks.refresh(true);
 
     let mut bytes_sent = 0u64;
     let mut bytes_recv = 0u64;
@@ -232,7 +206,7 @@ fn collect_network_metrics() -> NetworkMetrics {
     let mut errors_in = 0u64;
     let mut errors_out = 0u64;
 
-    for (_name, network) in &networks {
+    for (_name, network) in networks.iter() {
         bytes_sent += network.total_transmitted();
         bytes_recv += network.total_received();
         packets_sent += network.total_packets_transmitted();
