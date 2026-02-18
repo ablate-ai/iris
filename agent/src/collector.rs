@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 use sysinfo::{
-    Disks, Networks, Pid, ProcessRefreshKind, ProcessesToUpdate, System,
+    Disks, MemoryRefreshKind, Networks, Pid, ProcessRefreshKind, ProcessesToUpdate, System,
     MINIMUM_CPU_UPDATE_INTERVAL,
 };
 
@@ -22,7 +22,7 @@ static SYSTEM: once_cell::sync::Lazy<Mutex<System>> = once_cell::sync::Lazy::new
     let mut sys = System::new_all();
     // 第一次刷新，为后续采集做准备
     sys.refresh_cpu_usage();
-    sys.refresh_memory();
+    sys.refresh_memory_specifics(MemoryRefreshKind::everything());
     Mutex::new(sys)
 });
 
@@ -115,10 +115,32 @@ fn collect_cpu_metrics(sys: &System) -> CpuMetrics {
 }
 
 fn collect_memory_metrics(sys: &System) -> MemoryMetrics {
+    #[cfg(target_os = "linux")]
+    if let Some((total, used, available, swap_total, swap_used)) = read_memory_info_from_proc() {
+        let usage_percent = if total > 0 {
+            (used as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        return MemoryMetrics {
+            total,
+            used,
+            available,
+            usage_percent,
+            swap_total,
+            swap_used,
+        };
+    }
+
     let total = sys.total_memory();
     let used = sys.used_memory();
     let available = sys.available_memory();
-    let usage_percent = (used as f64 / total as f64) * 100.0;
+    let usage_percent = if total > 0 {
+        (used as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
 
     MemoryMetrics {
         total,
@@ -128,6 +150,43 @@ fn collect_memory_metrics(sys: &System) -> MemoryMetrics {
         swap_total: sys.total_swap(),
         swap_used: sys.used_swap(),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn read_memory_info_from_proc() -> Option<(u64, u64, u64, u64, u64)> {
+    use std::fs;
+
+    let content = fs::read_to_string("/proc/meminfo").ok()?;
+    let mut mem_total = 0u64;
+    let mut mem_available = 0u64;
+    let mut swap_total = 0u64;
+    let mut swap_free = 0u64;
+
+    for line in content.lines() {
+        if line.starts_with("MemTotal:") {
+            mem_total = parse_meminfo_kib(line)?;
+        } else if line.starts_with("MemAvailable:") {
+            mem_available = parse_meminfo_kib(line)?;
+        } else if line.starts_with("SwapTotal:") {
+            swap_total = parse_meminfo_kib(line)?;
+        } else if line.starts_with("SwapFree:") {
+            swap_free = parse_meminfo_kib(line)?;
+        }
+    }
+
+    if mem_total == 0 {
+        return None;
+    }
+
+    let used = mem_total.saturating_sub(mem_available);
+    let swap_used = swap_total.saturating_sub(swap_free);
+    Some((mem_total, used, mem_available, swap_total, swap_used))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_meminfo_kib(line: &str) -> Option<u64> {
+    let value_kib = line.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+    Some(value_kib.saturating_mul(1024))
 }
 
 fn collect_disk_metrics() -> Vec<DiskMetrics> {
