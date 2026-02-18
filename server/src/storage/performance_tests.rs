@@ -43,6 +43,23 @@ fn create_test_metrics(agent_id: &str, timestamp: i64) -> MetricsRequest {
     }
 }
 
+async fn wait_history_len(storage: &Storage, agent_id: &str, expected: usize, timeout_ms: u64) {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        let history = storage.get_agent_history(agent_id, expected).await;
+        if history.len() >= expected {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "Timed out waiting history for {agent_id}: got {}, expected {expected}",
+                history.len()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 #[tokio::test]
 async fn test_performance_single_write() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -189,7 +206,7 @@ async fn test_concurrent_single_agent_writes() {
             for i in 0..writes_per_task {
                 let timestamp = task_id * writes_per_task + i;
                 let metrics = create_test_metrics("agent-1", timestamp as i64);
-                storage_clone.save_metrics_sync(&metrics).await.unwrap();
+                storage_clone.save_metrics(&metrics).await;
             }
         });
         handles.push(handle);
@@ -208,6 +225,8 @@ async fn test_concurrent_single_agent_writes() {
         "Concurrent writes (single agent): {} writes in {:?} ({:.2} ops/sec)",
         total_writes, elapsed, throughput
     );
+
+    wait_history_len(&storage, "agent-1", total_writes, 5_000).await;
 
     // 持久化模式下，历史查询会返回完整结果，而不受缓存 100 条限制
     let history = storage.get_agent_history("agent-1", 2000).await;
@@ -394,8 +413,10 @@ async fn test_memory_leak_simulation() {
     // 写入大量数据
     for i in 0..1000 {
         let metrics = create_test_metrics("agent-1", i);
-        storage.save_metrics_sync(&metrics).await.unwrap();
+        storage.save_metrics(&metrics).await;
     }
+
+    wait_history_len(&storage, "agent-1", 1000, 5_000).await;
 
     // 持久化模式下，历史查询会返回完整结果
     let history = storage.get_agent_history("agent-1", 2000).await;

@@ -173,91 +173,6 @@ impl PersistStorage {
         .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
     }
 
-    /// 查询指定 Agent 在时间范围内的指标
-    pub async fn query_by_agent(
-        &self,
-        agent_id: &str,
-        start_ts: i64,
-        end_ts: i64,
-    ) -> Result<Vec<MetricsRequest>> {
-        let db = self.db.clone();
-        let agent_id = agent_id.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            let read_txn = db.begin_read()?;
-            let table = read_txn.open_table(METRICS_TABLE)?;
-
-            let mut results = Vec::new();
-
-            // 构造 agent 的 key 范围
-            let (start_prefix, end_prefix) = Self::make_key_range(&agent_id);
-
-            // 使用 range 查询该 agent 的所有数据
-            let iter = table.range(start_prefix.as_str()..end_prefix.as_str())?;
-            for item in iter {
-                let (key, value) = item?;
-                let key_str = key.value();
-
-                // 解析并验证 key
-                if let Some((id, ts)) = Self::parse_key(key_str) {
-                    if id == agent_id && ts >= start_ts && ts <= end_ts {
-                        let metrics: MetricsRequest = bincode::deserialize(value.value())?;
-                        results.push(metrics);
-                    }
-                }
-            }
-
-            // 兼容旧格式 key（agent_id:timestamp）
-            let all_iter = table.iter()?;
-            for item in all_iter {
-                let (key, value) = item?;
-                let key_str = key.value();
-                if key_str.contains('\0') {
-                    continue;
-                }
-                if let Some((id, ts)) = Self::parse_key(key_str) {
-                    if id == agent_id && ts >= start_ts && ts <= end_ts {
-                        let metrics: MetricsRequest = bincode::deserialize(value.value())?;
-                        results.push(metrics);
-                    }
-                }
-            }
-
-            results.sort_by_key(|m| m.timestamp);
-            Ok::<Vec<MetricsRequest>, anyhow::Error>(results)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
-    }
-
-    /// 获取指定 Agent 的最新时间戳
-    pub async fn get_agent_latest_timestamp(&self, agent_id: &str) -> Result<Option<i64>> {
-        let db = self.db.clone();
-        let agent_id = agent_id.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            let read_txn = db.begin_read()?;
-            let table = read_txn.open_table(AGENT_LATEST_TABLE)?;
-
-            match table.get(agent_id.as_str())? {
-                Some(bytes) => {
-                    let arr = bytes.value();
-                    if arr.len() == 8 {
-                        let ts = i64::from_be_bytes([
-                            arr[0], arr[1], arr[2], arr[3], arr[4], arr[5], arr[6], arr[7],
-                        ]);
-                        Ok(Some(ts))
-                    } else {
-                        Ok(None)
-                    }
-                }
-                None => Ok(None),
-            }
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
-    }
-
     /// 获取指定 Agent 的最新指标
     pub async fn get_latest_metrics(&self, agent_id: &str) -> Result<Option<MetricsRequest>> {
         let db = self.db.clone();
@@ -616,6 +531,33 @@ mod tests {
     use super::*;
     use common::proto::*;
 
+    trait PersistStorageTestExt {
+        async fn query_by_agent(
+            &self,
+            agent_id: &str,
+            start_ts: i64,
+            end_ts: i64,
+        ) -> Result<Vec<MetricsRequest>>;
+        async fn get_agent_latest_timestamp(&self, agent_id: &str) -> Result<Option<i64>>;
+    }
+
+    impl PersistStorageTestExt for PersistStorage {
+        async fn query_by_agent(
+            &self,
+            agent_id: &str,
+            start_ts: i64,
+            end_ts: i64,
+        ) -> Result<Vec<MetricsRequest>> {
+            let mut results = self.query_latest_by_agent(agent_id, usize::MAX).await?;
+            results.retain(|m| m.timestamp >= start_ts && m.timestamp <= end_ts);
+            Ok(results)
+        }
+
+        async fn get_agent_latest_timestamp(&self, agent_id: &str) -> Result<Option<i64>> {
+            Ok(self.get_latest_metrics(agent_id).await?.map(|m| m.timestamp))
+        }
+    }
+
     /// 创建完整的测试指标数据
     fn create_test_metrics(agent_id: &str, timestamp: i64) -> MetricsRequest {
         MetricsRequest {
@@ -861,7 +803,7 @@ mod tests {
         let storage = PersistStorage::new(&db_path).unwrap();
 
         // 测试包含特殊字符的 agent_id
-        let special_ids = vec!["agent-1", "agent_2", "agent.3", "agent:4"];
+        let special_ids = ["agent-1", "agent_2", "agent.3", "agent:4"];
 
         for (i, id) in special_ids.iter().enumerate() {
             storage

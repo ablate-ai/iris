@@ -420,7 +420,7 @@ async fn test_storage_channel_full() {
 }
 
 #[tokio::test]
-async fn test_storage_sync_returns_error_when_persistence_queue_closed() {
+async fn test_storage_save_after_shutdown_does_not_block() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir
         .path()
@@ -443,17 +443,11 @@ async fn test_storage_sync_returns_error_when_persistence_queue_closed() {
     storage.shutdown().await.unwrap();
 
     let metrics = create_test_metrics("agent-1", 1000);
-    let result = tokio::time::timeout(
-        Duration::from_secs(2),
-        storage.save_metrics_sync(&metrics),
-    )
-    .await;
+    let result = tokio::time::timeout(Duration::from_secs(2), storage.save_metrics(&metrics)).await;
 
-    assert!(result.is_ok(), "save_metrics_sync 不应卡住");
-    assert!(
-        result.unwrap().is_err(),
-        "持久化队列关闭后应返回错误"
-    );
+    assert!(result.is_ok(), "save_metrics 不应卡住");
+    let latest = storage.get_agent_latest("agent-1").await;
+    assert!(latest.is_some(), "即使持久化队列关闭，缓存也应更新");
 }
 
 #[tokio::test]
@@ -634,7 +628,6 @@ async fn test_storage_cleanup_shutdown() {
         retention_days: 30,
         cleanup_interval_hours: 1, // 1 小时间隔
         enable_cleanup: true,      // 启用清理
-        ..Default::default()
     };
 
     let storage = Storage::with_config(config);

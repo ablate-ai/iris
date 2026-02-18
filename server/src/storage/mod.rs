@@ -21,7 +21,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -30,11 +29,10 @@ pub const BATCH_SIZE: usize = 50;
 pub const BATCH_TIMEOUT: Duration = Duration::from_secs(5);
 pub const CHANNEL_CAPACITY: usize = 1000;
 
-/// 写入请求（可选等待持久化完成）
+/// 写入请求
 #[derive(Debug)]
 struct WriteRequest {
     metrics: MetricsRequest,
-    ack: Option<oneshot::Sender<Result<()>>>,
 }
 
 /// Storage 配置
@@ -206,7 +204,7 @@ impl Storage {
         self.persist_enabled
     }
 
-    async fn enqueue_metrics(&self, metrics: &MetricsRequest, wait_persist: bool) -> Result<()> {
+    async fn enqueue_metrics(&self, metrics: &MetricsRequest) -> Result<()> {
         let tx_opt = if let Some(tx_lock) = &self.write_tx {
             tx_lock.read().await.clone()
         } else {
@@ -220,24 +218,11 @@ impl Storage {
             return Ok(());
         };
 
-        let (ack_tx, ack_rx) = if wait_persist {
-            let (tx, rx) = oneshot::channel();
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
-
         tx.send(WriteRequest {
             metrics: metrics.clone(),
-            ack: ack_tx,
         })
         .await
         .map_err(|e| anyhow::anyhow!("failed to send metrics to queue: {}", e))?;
-
-        if let Some(rx) = ack_rx {
-            rx.await
-                .map_err(|e| anyhow::anyhow!("failed waiting persistence ack: {}", e))??;
-        }
 
         Ok(())
     }
@@ -246,7 +231,7 @@ impl Storage {
     pub async fn save_metrics(&self, metrics: &MetricsRequest) {
         self.cache.update(metrics.clone()).await;
 
-        if let Err(e) = self.enqueue_metrics(metrics, false).await {
+        if let Err(e) = self.enqueue_metrics(metrics).await {
             error!(
                 agent_id = %metrics.agent_id,
                 error = %e,
@@ -261,21 +246,6 @@ impl Storage {
             "Metrics saved to cache{}",
             if self.persist_enabled { " and queued for persistence" } else { "" }
         );
-    }
-
-    /// 保存指标数据并等待持久化落盘完成
-    pub async fn save_metrics_sync(&self, metrics: &MetricsRequest) -> Result<()> {
-        self.cache.update(metrics.clone()).await;
-
-        self.enqueue_metrics(metrics, true).await?;
-
-        debug!(
-            agent_id = %metrics.agent_id,
-            timestamp = metrics.timestamp,
-            persist = self.persist_enabled,
-            "Metrics saved to cache and persisted"
-        );
-        Ok(())
     }
 
     /// 获取所有 Agent ID
@@ -449,7 +419,6 @@ impl Storage {
         running: Arc<RwLock<bool>>,
     ) {
         let mut buffer = Vec::with_capacity(batch_size);
-        let mut pending_acks: Vec<oneshot::Sender<Result<()>>> = Vec::with_capacity(batch_size);
         let mut interval = tokio::time::interval(timeout);
 
         info!("Batch writer task started");
@@ -461,13 +430,10 @@ impl Storage {
                     match result {
                         Some(req) => {
                             buffer.push(req.metrics);
-                            if let Some(ack) = req.ack {
-                                pending_acks.push(ack);
-                            }
 
                             // 达到批量大小，立即写入
                             if buffer.len() >= batch_size {
-                                Self::flush_buffer(&persist, &mut buffer, &mut pending_acks, "batch size reached").await;
+                                Self::flush_buffer(&persist, &mut buffer, "batch size reached").await;
                             }
                         }
                         None => {
@@ -480,7 +446,7 @@ impl Storage {
                 // 超时触发
                 _ = interval.tick() => {
                     if !buffer.is_empty() {
-                        Self::flush_buffer(&persist, &mut buffer, &mut pending_acks, "timeout").await;
+                        Self::flush_buffer(&persist, &mut buffer, "timeout").await;
                     }
 
                     // 检查是否应该继续运行（备用退出机制）
@@ -498,13 +464,7 @@ impl Storage {
                 "Flushing remaining {} metrics before shutdown",
                 buffer.len()
             );
-            if !Self::flush_buffer(&persist, &mut buffer, &mut pending_acks, "shutdown").await {
-                for ack in pending_acks.drain(..) {
-                    let _ = ack.send(Err(anyhow::anyhow!(
-                        "batch writer stopped before data was persisted"
-                    )));
-                }
-            }
+            let _ = Self::flush_buffer(&persist, &mut buffer, "shutdown").await;
         }
 
         info!("Batch writer task stopped");
@@ -513,7 +473,6 @@ impl Storage {
     async fn flush_buffer(
         persist: &Arc<PersistStorage>,
         buffer: &mut Vec<MetricsRequest>,
-        pending_acks: &mut Vec<oneshot::Sender<Result<()>>>,
         reason: &str,
     ) -> bool {
         if buffer.is_empty() {
@@ -523,21 +482,11 @@ impl Storage {
         match persist.flush_batch(buffer).await {
             Ok(_) => {
                 debug!("Flushed {} metrics ({})", buffer.len(), reason);
-                for ack in pending_acks.drain(..) {
-                    let _ = ack.send(Ok(()));
-                }
                 buffer.clear();
                 true
             }
             Err(e) => {
                 error!("Failed to flush batch ({}): {}", reason, e);
-                for ack in pending_acks.drain(..) {
-                    let _ = ack.send(Err(anyhow::anyhow!(
-                        "failed to flush batch ({}): {}",
-                        reason,
-                        e
-                    )));
-                }
                 false
             }
         }

@@ -56,7 +56,7 @@ impl Cache {
         let data = self.data.read().await;
         if let Some(entry) = data.get(agent_id) {
             let len = entry.len();
-            let start = if len > limit { len - limit } else { 0 };
+            let start = len.saturating_sub(limit);
             entry.range(start..).cloned().collect()
         } else {
             Vec::new()
