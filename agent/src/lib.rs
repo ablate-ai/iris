@@ -41,6 +41,7 @@ impl Agent {
                     info!("流式连接正常结束");
                 }
                 Err(e) => {
+                    collector::increment_errors();
                     error!("流式连接错误: {}，3秒后重连", e);
                     tokio::time::sleep(Duration::from_secs(3)).await;
                 }
@@ -76,15 +77,11 @@ impl Agent {
             };
 
             if tx.send(request).await.is_err() {
-                error!("发送指标失败，流已关闭");
-                collector::increment_errors();
-                break;
+                return Err(anyhow::anyhow!("发送指标失败，流已关闭"));
             }
 
             collector::increment_metrics_sent();
             info!("指标已发送");
         }
-
-        Ok(())
     }
 }
