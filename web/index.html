@@ -1131,6 +1131,9 @@
                 const opts = {
                     width: chartRef.current.offsetWidth,
                     height: height,
+                    legend: {
+                        show: false,
+                    },
                     series: [
                         {},
                         {
@@ -1142,13 +1145,13 @@
                     ],
                     axes: [
                         {
-                            stroke: '#e5e7eb',
-                            grid: { stroke: '#f3f4f6', width: 1 },
+                            stroke: '#9ca3af',
+                            grid: { stroke: '#d1d5db', width: 1 },
                         },
                         {
-                            stroke: '#e5e7eb',
-                            grid: { stroke: '#f3f4f6', width: 1 },
-                            size: 40,
+                            stroke: '#9ca3af',
+                            grid: { stroke: '#d1d5db', width: 1 },
+                            size: 52,
                             font: '10px -apple-system, BlinkMacSystemFont, sans-serif',
                             values: (u, vals) => {
                                 if (title.includes('速度')) {
