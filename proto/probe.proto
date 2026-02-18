@@ -52,6 +52,7 @@ message SystemMetrics {
   NetworkMetrics network = 4;
   SystemInfo system_info = 6;       // 系统信息
   AgentMetrics agent_metrics = 7;  // 探针自身指标
+  repeated TcpPingMetrics tcp_ping = 8; // TCP 探测延时
 }
 
 // CPU 指标
@@ -116,4 +117,13 @@ message AgentMetrics {
   uint64 uptime_seconds = 4;      // 探针运行时长（秒）
   uint64 metrics_sent = 5;        // 已发送指标次数
   uint64 errors_count = 6;        // 错误次数
+}
+
+// TCP 探测指标
+message TcpPingMetrics {
+  string carrier = 1;    // 运营商标识（unicom/mobile/telecom）
+  string endpoint = 2;   // 目标地址 host:port
+  uint64 latency_ms = 3; // TCP connect 延时（毫秒）
+  bool success = 4;      // 探测是否成功
+  string error = 5;      // 错误信息（失败时）
 }

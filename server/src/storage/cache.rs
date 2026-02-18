@@ -103,6 +103,7 @@ mod tests {
                 }),
                 system_info: None,
                 agent_metrics: None,
+                tcp_ping: vec![],
             }),
         }
     }

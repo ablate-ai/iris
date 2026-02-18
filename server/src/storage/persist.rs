@@ -620,6 +620,7 @@ mod tests {
                     metrics_sent: 1000,
                     errors_count: 0,
                 }),
+                tcp_ping: vec![],
             }),
         }
     }

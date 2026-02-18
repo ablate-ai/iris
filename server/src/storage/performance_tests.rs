@@ -39,6 +39,7 @@ fn create_test_metrics(agent_id: &str, timestamp: i64) -> MetricsRequest {
             }),
             system_info: None,
             agent_metrics: None,
+            tcp_ping: vec![],
         }),
     }
 }
