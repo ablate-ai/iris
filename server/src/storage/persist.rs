@@ -554,7 +554,10 @@ mod tests {
         }
 
         async fn get_agent_latest_timestamp(&self, agent_id: &str) -> Result<Option<i64>> {
-            Ok(self.get_latest_metrics(agent_id).await?.map(|m| m.timestamp))
+            Ok(self
+                .get_latest_metrics(agent_id)
+                .await?
+                .map(|m| m.timestamp))
         }
     }
 

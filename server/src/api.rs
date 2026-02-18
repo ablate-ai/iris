@@ -190,10 +190,7 @@ async fn get_agent_history(
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<ApiResponse<Vec<MetricsRequest>>>, StatusCode> {
     let limit = query.limit.min(max_history_limit());
-    let history = state
-        .storage
-        .get_agent_history(&agent_id, limit)
-        .await;
+    let history = state.storage.get_agent_history(&agent_id, limit).await;
 
     if history.is_empty() {
         info!("API: Agent {} 没有历史数据，返回空列表", agent_id);

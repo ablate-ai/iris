@@ -230,7 +230,11 @@ async fn test_concurrent_single_agent_writes() {
 
     // 持久化模式下，历史查询会返回完整结果，而不受缓存 100 条限制
     let history = storage.get_agent_history("agent-1", 2000).await;
-    assert_eq!(history.len(), total_writes, "History should include persisted data");
+    assert_eq!(
+        history.len(),
+        total_writes,
+        "History should include persisted data"
+    );
 }
 
 #[tokio::test]
