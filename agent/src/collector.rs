@@ -45,7 +45,7 @@ pub fn collect_metrics() -> SystemMetrics {
     sys.refresh_cpu_usage();
 
     // 刷新其他系统信息
-    sys.refresh_memory();
+    sys.refresh_memory_specifics(MemoryRefreshKind::everything());
     let collection_time_ms = start.elapsed().as_millis() as u64;
 
     SystemMetrics {

@@ -50,12 +50,28 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
+# 更新所有 Cargo.toml 的版本号
+echo -e "${GREEN}更新 Cargo.toml 版本号...${NC}"
+sed -i.bak "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+sed -i.bak "s/^version = \".*\"/version = \"${VERSION}\"/" agent/Cargo.toml
+sed -i.bak "s/^version = \".*\"/version = \"${VERSION}\"/" server/Cargo.toml
+sed -i.bak "s/^version = \".*\"/version = \"${VERSION}\"/" common/Cargo.toml
+
+# 删除备份文件
+rm -f Cargo.toml.bak agent/Cargo.toml.bak server/Cargo.toml.bak common/Cargo.toml.bak
+
+# 提交版本号变更
+echo -e "${GREEN}提交版本号变更...${NC}"
+git add Cargo.toml agent/Cargo.toml server/Cargo.toml common/Cargo.toml
+git commit -m "chore: bump version to ${VERSION}"
+
 # 创建 tag
 echo -e "${GREEN}创建 tag: $TAG${NC}"
 git tag -a "$TAG" -m "Release $TAG"
 
-# 推送 tag
-echo -e "${GREEN}推送 tag 到远程仓库...${NC}"
+# 推送提交和 tag
+echo -e "${GREEN}推送到远程仓库...${NC}"
+git push origin main
 git push origin "$TAG"
 
 echo ""
