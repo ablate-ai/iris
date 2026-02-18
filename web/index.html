@@ -99,7 +99,7 @@
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: 1fr;
             gap: 12px;
             margin-bottom: 16px;
         }
@@ -114,6 +114,59 @@
 
         .stat-card:hover {
             box-shadow: var(--shadow-md);
+        }
+
+        .status-card {
+            background: var(--bg-primary);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: all 0.2s;
+        }
+
+        .status-card:hover {
+            box-shadow: var(--shadow-md);
+        }
+
+        .status-indicator {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+
+        .status-indicator.healthy {
+            background: #d1fae5;
+        }
+
+        .status-indicator.warning {
+            background: #fef3c7;
+        }
+
+        .status-indicator.critical {
+            background: #fee2e2;
+        }
+
+        .status-content {
+            flex: 1;
+        }
+
+        .status-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .status-description {
+            font-size: 12px;
+            color: var(--text-secondary);
         }
 
         .stat-label {
@@ -847,6 +900,59 @@
             </div>
         );
 
+        const StatusCard = ({ onlineCount, offlineCount, agents }) => {
+            // 判断系统状态
+            let status = 'healthy';
+            let icon = '✓';
+            let title = '系统正常';
+            let description = `${onlineCount} 个 Agent 在线`;
+
+            if (offlineCount > 0) {
+                description += `，${offlineCount} 个离线`;
+            }
+
+            if (onlineCount === 0) {
+                status = 'critical';
+                icon = '✕';
+                title = '无在线 Agent';
+                description = `所有 Agent 均已离线（共 ${offlineCount} 个）`;
+            } else {
+                // 检查是否有高负载的 agent
+                const highCpuAgents = agents.filter(a => a.system?.cpu?.usage_percent > 80);
+                const highMemAgents = agents.filter(a => a.system?.memory?.usage_percent > 85);
+
+                if (highCpuAgents.length > 0 || highMemAgents.length > 0) {
+                    status = 'warning';
+                    icon = '⚠';
+                    title = '检测到异常';
+                    const issues = [];
+                    if (highCpuAgents.length > 0) issues.push(`${highCpuAgents.length} 个 CPU 过高`);
+                    if (highMemAgents.length > 0) issues.push(`${highMemAgents.length} 个内存过高`);
+                    description = `${onlineCount} 个在线（${issues.join('，')}）`;
+                    if (offlineCount > 0) {
+                        description += `，${offlineCount} 个离线`;
+                    }
+                } else if (offlineCount > 0) {
+                    // 有离线但没有异常，显示警告
+                    status = 'warning';
+                    icon = '⚠';
+                    title = '部分 Agent 离线';
+                }
+            }
+
+            return (
+                <div className="status-card">
+                    <div className={`status-indicator ${status}`}>
+                        {icon}
+                    </div>
+                    <div className="status-content">
+                        <div className="status-title">{title}</div>
+                        <div className="status-description">{description}</div>
+                    </div>
+                </div>
+            );
+        };
+
         const MetricCard = ({ label, value, percent, type, total }) => {
             const numValue = parseFloat(value) || 0;
             const hasPercent = typeof value === 'string' && value.includes('%');
@@ -1496,17 +1602,15 @@
             };
 
             const agentsList = Array.from(agents.values());
+            const now = Date.now();
             const onlineAgents = agentsList.filter(agent => {
-                const now = Date.now();
                 const lastSeen = agent.timestamp * 1000;
                 return (now - lastSeen) < 10000; // 10 秒超时
             });
-            const avgCpu = onlineAgents.length > 0
-                ? (onlineAgents.reduce((acc, a) => acc + (a.system?.cpu?.usage_percent || 0), 0) / onlineAgents.length).toFixed(1)
-                : 0;
-            const avgMemory = onlineAgents.length > 0
-                ? (onlineAgents.reduce((acc, a) => acc + (a.system?.memory?.usage_percent || 0), 0) / onlineAgents.length).toFixed(1)
-                : 0;
+            const offlineAgents = agentsList.filter(agent => {
+                const lastSeen = agent.timestamp * 1000;
+                return (now - lastSeen) >= 10000; // 10 秒超时
+            });
 
             return (
                 <div className="app">
@@ -1522,10 +1626,11 @@
 
                     <div className="container">
                         <div className="stats-grid">
-                            <StatCard label="在线 Agent" value={onlineAgents.length} />
-                            <StatCard label="平均 CPU" value={avgCpu} unit="%" />
-                            <StatCard label="平均内存" value={avgMemory} unit="%" />
-                            <StatCard label="状态" value="正常" />
+                            <StatusCard
+                                onlineCount={onlineAgents.length}
+                                offlineCount={offlineAgents.length}
+                                agents={onlineAgents}
+                            />
                         </div>
 
                         {loading && (
