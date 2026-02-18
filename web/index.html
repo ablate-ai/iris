@@ -1183,6 +1183,20 @@
         // AgentModal 改为使用 agentId，从 agents Map 中实时获取数据
         const AgentModal = ({ agentId, onClose, history, agents }) => {
             const agent = agents.get(agentId);
+
+            useEffect(() => {
+                const handleKeyDown = (event) => {
+                    if (event.key === 'Escape') {
+                        onClose();
+                    }
+                };
+
+                document.addEventListener('keydown', handleKeyDown);
+                return () => {
+                    document.removeEventListener('keydown', handleKeyDown);
+                };
+            }, [onClose]);
+
             if (!agent) return null;
 
             const sys = agent.system;
