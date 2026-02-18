@@ -174,12 +174,6 @@
             margin-bottom: 2px;
         }
 
-        .agent-id {
-            font-size: 11px;
-            color: var(--text-tertiary);
-            font-family: 'SF Mono', Monaco, monospace;
-        }
-
         .agent-status {
             display: inline-flex;
             align-items: center;
@@ -394,6 +388,13 @@
             font-size: 16px;
             font-weight: 600;
             color: var(--text-primary);
+        }
+
+        .modal-subtitle {
+            margin-top: 2px;
+            font-size: 12px;
+            color: var(--text-tertiary);
+            font-family: 'SF Mono', Monaco, monospace;
         }
 
         .modal-close {
@@ -916,15 +917,14 @@
 
             return (
                 <div className="agent-card" onClick={() => onClick(agent)}>
-                    <div className="agent-header">
-                        <div>
-                            <div className="agent-name">{agent.hostname}</div>
-                            <div className="agent-id">{agent.agent_id.substring(0, 8)}</div>
-                        </div>
-                        <span className={`agent-status ${isOnline ? 'status-online' : 'status-offline'}`}>
-                            <span className="status-dot"></span>
-                            {isOnline ? '在线' : '离线'}
-                        </span>
+                        <div className="agent-header">
+                            <div>
+                                <div className="agent-name">{agent.hostname}</div>
+                            </div>
+                            <span className={`agent-status ${isOnline ? 'status-online' : 'status-offline'}`}>
+                                <span className="status-dot"></span>
+                                {isOnline ? '在线' : '离线'}
+                            </span>
                     </div>
                     <div className="agent-meta">
                         <div className="agent-meta-item">
@@ -1090,7 +1090,10 @@
                 <div className="modal-overlay" onClick={onClose}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
-                            <h2 className="modal-title">{agent.hostname}</h2>
+                            <div>
+                                <h2 className="modal-title">{agent.hostname}</h2>
+                                <div className="modal-subtitle">{agent.agent_id}</div>
+                            </div>
                             <button className="modal-close" onClick={onClose}>&times;</button>
                         </div>
                         <div className="modal-body">
