@@ -29,6 +29,8 @@ static SYSTEM: once_cell::sync::Lazy<Mutex<System>> = once_cell::sync::Lazy::new
 // 标记是否已经完成初始化等待
 static CPU_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+// TCP Ping 采集已按需临时停用。
+
 /// 采集系统指标
 pub fn collect_metrics() -> SystemMetrics {
     let start = Instant::now();
@@ -55,6 +57,8 @@ pub fn collect_metrics() -> SystemMetrics {
         network: Some(collect_network_metrics()),
         system_info: Some(collect_system_info(&sys)),
         agent_metrics: Some(collect_agent_metrics(&mut sys, collection_time_ms)),
+        // TCP Ping 采集已按需临时停用，固定上报空数组。
+        tcp_ping: vec![],
     }
 }
 

@@ -858,6 +858,8 @@
             return date.toLocaleString('zh-CN');
         };
 
+        // TCP Ping 展示已按需临时停用。
+
         // Components
         const AnimatedNumber = ({ value, duration = 1000, decimals = 1, startFromZero = false }) => {
             const [initialized, setInitialized] = useState(!startFromZero);
@@ -998,6 +1000,7 @@
             const downloadSpeed = formatSpeed(agent.network_speed?.download || 0);
             const totalSent = formatBytesShort(network?.bytes_sent);
             const totalRecv = formatBytesShort(network?.bytes_recv);
+            // const tcpPing = normalizeTcpPing(sys?.tcp_ping);
 
             // 计算网络趋势
             const prevUploadSpeed = agent.prev_network_speed?.upload || 0;
@@ -1077,6 +1080,8 @@
                             </div>
                         </div>
                     )}
+
+                    {/* TCP Ping 展示已按需临时停用 */}
 
                     <div className="metrics-grid">
                         <MetricCard
@@ -1208,6 +1213,7 @@
             const memory = sys?.memory?.usage_percent?.toFixed(1) || 0;
             const load = sys?.cpu?.load_avg_1?.toFixed(2) || 0;
             const uptime = formatUptime(sys?.system_info?.uptime);
+            // const tcpPing = normalizeTcpPing(sys?.tcp_ping);
 
             return (
                 <div className="modal-overlay" onClick={onClose}>
@@ -1398,6 +1404,8 @@
                                     </div>
                                 </div>
                             )}
+
+                            {/* TCP Ping 展示已按需临时停用 */}
 
                             {/* 系统信息 */}
                             {sys?.system_info && (
