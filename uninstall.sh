@@ -137,30 +137,10 @@ remove_server_data() {
         return 1
     fi
 
-    # 询问是否删除数据
-    echo ""
-    warning "数据目录: ${data_dir}"
-    warning "包含数据库文件: metrics.redb"
-    echo -e "${RED}警告: 删除后所有监控数据将永久丢失！${NC}"
-    echo ""
-    read -p "是否删除数据? (输入 'yes' 确认): " confirm
-
-    if [ "$confirm" = "yes" ]; then
-        # 再次确认
-        echo ""
-        read -p "再次确认: 输入 'DELETE' 以删除所有数据: " double_confirm
-
-        if [ "$double_confirm" = "DELETE" ]; then
-            local prefix=$(get_prefix_cmd)
-            ${prefix} rm -rf "$data_dir"
-            success "已删除数据目录: ${data_dir}"
-        else
-            warning "取消删除数据"
-            info "数据目录保留: ${data_dir}"
-        fi
-    else
-        info "数据目录保留: ${data_dir}"
-    fi
+    local prefix=$(get_prefix_cmd)
+    info "删除数据目录: ${data_dir}"
+    ${prefix} rm -rf "$data_dir"
+    success "已删除数据目录: ${data_dir}"
 }
 
 # 检测已安装的组件
